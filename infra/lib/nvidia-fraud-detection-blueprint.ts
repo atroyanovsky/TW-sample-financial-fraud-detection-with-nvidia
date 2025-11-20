@@ -5,7 +5,6 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as blueprints from '@aws-quickstart/eks-blueprints'
 import { NagSuppressions } from 'cdk-nag';
 import { Construct } from 'constructs';
-import { ALBDefaultIngressClassAddOn } from './alb-default-ingress-class-addon';
 
 export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
   /**
@@ -102,7 +101,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
     const repoUrl = "https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia";
 
     const addons = [
-      new ALBDefaultIngressClassAddOn(),
+      new blueprints.addons.AwsLoadBalancerControllerAddOn(),
       new blueprints.addons.GpuOperatorAddon({
         version: "v25.3.2"
       }),
