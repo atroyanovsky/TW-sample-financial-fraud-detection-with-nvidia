@@ -26,7 +26,7 @@ export class SageMakerNotebookRoleStack extends cdk.Stack {
 
     // Create the SageMaker notebook role
     this.notebookRole = new iam.Role(this, "SageMakerNotebookRole", {
-      roleName: "AmazonSageMaker-NotebookRole-CDK",
+      roleName: "NvidiaFinancialFraudDetection-NotebookRole",
       description:
         "SageMaker notebook role for training jobs, S3 access, and CloudFormation reads",
       assumedBy: new iam.CompositePrincipal(
