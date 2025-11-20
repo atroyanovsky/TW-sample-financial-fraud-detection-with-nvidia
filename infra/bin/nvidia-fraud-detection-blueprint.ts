@@ -4,6 +4,7 @@ import { AwsSolutionsChecks } from "cdk-nag";
 import { NvidiaFraudDetectionBlueprint } from "../lib/nvidia-fraud-detection-blueprint";
 import { TarExtractorStack } from "../lib/tar-extractor-stack";
 import { SageMakerExecutionRoleStack } from "../lib/sagemaker-training-role";
+import { SageMakerNotebookRoleStack } from "../lib/sagemaker-notebook-role";
 import { BlueprintECRStack } from "../lib/training-image-repo";
 
 const app = new cdk.App();
@@ -36,6 +37,16 @@ const sagemakerExecutionRole = new SageMakerExecutionRoleStack(
   },
 );
 
+const sagemakerNotebookRole = new SageMakerNotebookRoleStack(
+  app,
+  "NvidiaFraudDetectionNotebookRole",
+  {
+    env: env,
+    modelBucketArn: "arn:aws:s3:::" + modelBucketName,
+    modelRegistryBucketArn: "arn:aws:s3:::" + modelBucketName + "-model-registry",
+  },
+);
+
 const trainingImageRepo = new BlueprintECRStack(
   app,
   "NvidiaFraudDetectionTrainingImageRepo",
@@ -55,4 +66,5 @@ const mainStack = new NvidiaFraudDetectionBlueprint(
 
 mainStack.addDependency(trainingImageRepo);
 mainStack.addDependency(sagemakerExecutionRole);
+mainStack.addDependency(sagemakerNotebookRole);
 mainStack.addDependency(tarExtractorStack);
