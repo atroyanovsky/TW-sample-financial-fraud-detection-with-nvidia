@@ -134,7 +134,34 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       .version(eks.KubernetesVersion.V1_32)
       .addOns(
         new blueprints.addons.KarpenterV1AddOn({
-          nodePoolSpec: g4dnNodePoolSpec
+          nodePoolSpec: g4dnNodePoolSpec,
+          ec2NodeClassSpec: {
+            amiFamily: "AL2023",
+            amiSelectorTerms: [{ alias: "al2023@latest" }],
+            subnetSelectorTerms: [
+              {
+                tags: {
+                  "Name": "*Private*"
+                }
+              }
+            ],
+            securityGroupSelectorTerms: [
+              {
+                tags: {
+                  "aws:eks:cluster-name": "ClusterBlueprint"
+                }
+              }
+            ],
+            blockDeviceMappings: [
+              {
+                deviceName: "/dev/xvda",
+                ebs: {
+                  volumeSize: "10Gi",
+                  deleteOnTermination: true
+                }
+              }
+            ]
+          }
         }),
         ...addons
       )
