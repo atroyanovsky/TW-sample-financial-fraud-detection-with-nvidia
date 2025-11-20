@@ -5,7 +5,6 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as blueprints from '@aws-quickstart/eks-blueprints'
 import { NagSuppressions } from 'cdk-nag';
 import { Construct } from 'constructs';
-import { ALBDefaultIngressClassAddOn } from './alb-default-ingress-class-addon';
 
 export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
   /**
@@ -67,7 +66,9 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
           ],
         },
         { key: "kubernetes.io/arch", operator: "In", values: ["amd64"] },
-        { key: "topology.kubernetes.io/zone", operator: "In", values: [`${props.env?.region}a`, `${props.env?.region}b`, `${props.env?.region}c`] }
+        { key: "topology.kubernetes.io/zone", operator: "In", values: [`${props.env?.region}a`, `${props.env?.region}b`, `${props.env?.region}c`] },
+        // Ensure GPU-accelerated AMI family is used
+        { key: "karpenter.k8s.aws/instance-gpu-count", operator: "Gt", values: ["0"] }
       ],
 
       // Node lifecycle - expire after 24h for cost optimization
@@ -100,7 +101,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
     const repoUrl = "https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia";
 
     const addons = [
-      new ALBDefaultIngressClassAddOn(),
+      new blueprints.addons.AwsLoadBalancerControllerAddOn(),
       new blueprints.addons.GpuOperatorAddon({
         version: "v25.3.2"
       }),
@@ -125,14 +126,44 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       }),
     ];
 
-    const cluster = blueprints.AutomodeBuilder.builder({
-      extraNodePools: {
-        'nvidia': g4dnNodePoolSpec
-      }
-    }).account(this.account)
+    // Use EKS with Karpenter instead of Automode for GPU driver flexibility
+    const cluster = blueprints.EksBlueprint.builder()
+      .account(this.account)
       .region(this.region)
       .version(eks.KubernetesVersion.V1_32)
-      .addOns(...addons)
+      .addOns(
+        new blueprints.addons.KarpenterV1AddOn({
+          nodePoolSpec: g4dnNodePoolSpec,
+          ec2NodeClassSpec: {
+            amiFamily: "AL2023",
+            amiSelectorTerms: [{ alias: "al2023@latest" }],
+            subnetSelectorTerms: [
+              {
+                tags: {
+                  "Name": "*Private*"
+                }
+              }
+            ],
+            securityGroupSelectorTerms: [
+              {
+                tags: {
+                  "aws:eks:cluster-name": "ClusterBlueprint"
+                }
+              }
+            ],
+            blockDeviceMappings: [
+              {
+                deviceName: "/dev/xvda",
+                ebs: {
+                  volumeSize: "10Gi",
+                  deleteOnTermination: true
+                }
+              }
+            ]
+          }
+        }),
+        ...addons
+      )
       .teams(triton)
       .resourceProvider(blueprints.GlobalResources.Vpc, new blueprints.DirectVpcProvider(vpc))
       .build(this, "ClusterBlueprint");
@@ -189,20 +220,20 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
     );
 
     // Additional suppression for KubectlProvider ECR Public access
-    NagSuppressions.addResourceSuppressionsByPath(
-      this,
-      '/NvidiaFraudDetectionBlueprint/ClusterBlueprint/ClusterBlueprint/KubectlProvider/Handler/ServiceRole/Resource',
-      [
-        {
-          id: 'AwsSolutions-IAM4',
-          reason: 'ECR Public ReadOnly policy required for kubectl provider to access public container images',
-          appliesTo: [
-            'Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly',
-            'Policy::{\"Fn::If\":[\"ClusterBlueprintKubectlProviderHandlerHasEcrPublicFD2FFDE5\",{\"Fn::Join\":[\"\",[\"arn:\",{\"Ref\":\"AWS::Partition\"},\":iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly\"]]},{\"Ref\":\"AWS::NoValue\"}]}'
-          ]
-        }
-      ]
-    );
+    // NagSuppressions.addResourceSuppressionsByPath(
+    //   this,
+    //   '/NvidiaFraudDetectionBlueprint/ClusterBlueprint/ClusterBlueprint/KubectlProvider/Handler/ServiceRole/Resource',
+    //   [
+    //     {
+    //       id: 'AwsSolutions-IAM4',
+    //       reason: 'ECR Public ReadOnly policy required for kubectl provider to access public container images',
+    //       appliesTo: [
+    //         'Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly',
+    //         'Policy::{\"Fn::If\":[\"ClusterBlueprintKubectlProviderHandlerHasEcrPublicFD2FFDE5\",{\"Fn::Join\":[\"\",[\"arn:\",{\"Ref\":\"AWS::Partition\"},\":iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly\"]]},{\"Ref\":\"AWS::NoValue\"}]}'
+    //       ]
+    //     }
+    //   ]
+    // );
 
     // Suppress VPC flow log warning
     NagSuppressions.addResourceSuppressions(
