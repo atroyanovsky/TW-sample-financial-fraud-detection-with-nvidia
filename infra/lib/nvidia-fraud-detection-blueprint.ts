@@ -110,7 +110,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       new blueprints.addons.ArgoCDAddOn({
         bootstrapRepo: {
           repoUrl: repoUrl,
-          targetRevision: 'no-more-auto-mode',
+          targetRevision: 'main',
           path: 'infra/manifests/argocd',
         },
         bootstrapValues: {
