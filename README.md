@@ -136,7 +136,7 @@ Login to ECR:
 ```bash
 
 export ECR_REPO=$(echo "${NVIDIA_ECR_URI%%/*}")
-aws ecr get-login-password --region region | docker login --username AWS --password-stdin $ECR_REPO
+aws ecr get-login-password --region <your-aws-region> | docker login --username AWS --password-stdin $ECR_REPO
 ```
 
 Tag the NVIDIA Image and push it to ECR:
