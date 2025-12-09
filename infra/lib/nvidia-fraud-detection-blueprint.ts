@@ -31,6 +31,14 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       }
     });
 
+    // Create security group for SageMaker notebook to access Triton inference endpoint
+    const sagemakerSecurityGroup = new ec2.SecurityGroup(this, 'SageMakerSecurityGroup', {
+      vpc: vpc,
+      description: 'Security group for SageMaker notebook instances to access internal Triton ALB',
+      securityGroupName: 'TritonSageMakerSecurityGroup',
+      allowAllOutbound: true,
+    });
+
     const g4dnNodePoolSpec: blueprints.NodePoolV1Spec = {
       labels: {
         "node-type": "gpu",
@@ -246,6 +254,32 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
         reason: 'VPC Flow Logs are enabled via flowLogs configuration'
       }],
       true
+    );
+
+    // Export VPC information for SageMaker integration
+    new cdk.CfnOutput(this, 'VpcId', {
+      value: vpc.vpcId,
+      description: 'VPC ID for SageMaker notebook configuration',
+      exportName: 'TritonVpcId',
+    });
+
+    new cdk.CfnOutput(this, 'VpcPrivateSubnetIds', {
+      value: vpc.privateSubnets.map(subnet => subnet.subnetId).join(','),
+      description: 'Private subnet IDs for SageMaker notebook (comma-separated)',
+      exportName: 'TritonVpcPrivateSubnetIds',
+    });
+
+    new cdk.CfnOutput(this, 'SageMakerSecurityGroupId', {
+      value: sagemakerSecurityGroup.securityGroupId,
+      description: 'Security group ID to use for SageMaker notebook instances',
+      exportName: 'SageMakerSecurityGroupId',
+    });
+
+    // Allow all traffic within the VPC for SageMaker to access internal ALB
+    sagemakerSecurityGroup.addIngressRule(
+      ec2.Peer.ipv4(vpc.vpcCidrBlock),
+      ec2.Port.allTraffic(),
+      'Allow all traffic from VPC CIDR for internal ALB access'
     );
 
   }

@@ -44,7 +44,7 @@ serviceAccount:
 # Ingress configuration
 ingress:
   enabled: true
-  scheme: internet-facing  # or internal for private ALB
+  scheme: internal  # internal for VPC-only access, internet-facing for public access
   hosts: []
   exposeMetrics: false  # Set to true if you want to expose metrics endpoint
   annotations: {}
