@@ -114,7 +114,7 @@ def generate_xgboost_features(
     transformer = transformer.fit(pdf_training[predictor_columns])
 
     # transformed column names
-    columns_of_transformed_data = list(
+    columns_of_transformed_txs = list(
         map(
             lambda name: name.split("__")[1],
             list(transformer.get_feature_names_out(predictor_columns)),
@@ -122,7 +122,7 @@ def generate_xgboost_features(
     )
     
     type_mapping = {}
-    for col in columns_of_transformed_data:
+    for col in columns_of_transformed_txs:
         if col.split("_")[0] in nominal_predictors:
             type_mapping[col] = "int8"
         elif col in numerical_predictors:
@@ -133,7 +133,7 @@ def generate_xgboost_features(
     # Transform splits
     def transform_and_concat(idx, label_df):
         X = transformer.transform(data[idx][predictor_columns])
-        X_df = pd.DataFrame(X, columns=columns_of_transformed_data)
+        X_df = pd.DataFrame(X, columns=columns_of_transformed_txs)
         id_df = pd.DataFrame(
             id_transformer.transform(data[idx][config.MERCHANT_AND_USER_COLS]),
             columns=columns_of_transformed_id_data,
@@ -155,8 +155,8 @@ def generate_xgboost_features(
     # Save the transformer and feature info to the bundle for GNN
     cleaned_data_bundle.update({
         'xgb_transformer': transformer,
-        'xgb_feature_columns': columns_of_transformed_data,
+        'xgb_feature_columns': columns_of_transformed_txs,
         'output_dir': output_dir
     })
 
-    return transformer, columns_of_transformed_data
+    return transformer, columns_of_transformed_txs

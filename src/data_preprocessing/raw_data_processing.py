@@ -5,6 +5,7 @@ Module for loading, cleaning, and encoding the raw TabFormer credit card transac
 """
 
 from typing import Dict, Any
+import cudf
 import pandas as pd
 import numpy as np
 import os
@@ -21,9 +22,9 @@ def cramers_v(x, y):
     Compute correlation of categorical field x with target y.
     See https://en.wikipedia.org/wiki/Cram%C3%A9r's_V
     """
-    confusion_matrix = pd.crosstab(x, y).to_numpy()
+    confusion_matrix = cudf.crosstab(x, y).to_numpy()
     chi2 = ss.chi2_contingency(confusion_matrix)[0]
-    n = confusion_matrix.sum()
+    n = confusion_matrix.sum().sum()
     r, k = confusion_matrix.shape
     return np.sqrt(chi2 / (n * (min(k - 1, r - 1))))
 

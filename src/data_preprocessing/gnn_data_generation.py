@@ -1,24 +1,32 @@
 """
 gnn_data_generation.py
 ---------------------
-Module for generating GNN graph, node features, and node labels from cleaned TabFormer data.
+Module for generating GNN graph data for link prediction on a bipartite User-Merchant graph.
+Transactions are represented as edges between users and merchants.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import os
-import json
 import numpy as np
 import pandas as pd
-from scipy.linalg import block_diag
+import cudf
 
 from config import DataConfig, default_config
 
 
-def create_feature_mask(columns):
-    # Dictionary to store mapping from original column to mask value
+def create_feature_mask(columns, start_mask_id=0):
+    """Create a feature mask mapping columns to their base feature groups.
+    
+    Args:
+        columns: List of column names
+        start_mask_id: Starting mask ID value (for chaining multiple masks)
+        
+    Returns:
+        Tuple of (mask_mapping dict, feature_mask array)
+    """
     mask_mapping = {}
     mask_values = []
-    current_mask = 0
+    current_mask = start_mask_id
 
     for col in columns:
         # For encoded columns, assume the base is before the underscore
@@ -46,21 +54,27 @@ def generate_gnn_graph_data(
     output_dir: Optional[str] = None,
     data_split_year: Optional[int] = None,
     xgb_transformer=None,
-    columns_of_transformed_data: Optional[List[str]] = None,
+    columns_of_transformed_txs: Optional[List[str]] = None,
     config: Optional[DataConfig] = None
-) -> Dict[str, Any]:
-    """Generate GNN graph data from cleaned data.
+) -> Tuple[Dict, Dict, Dict]:
+    """Generate GNN graph data for link prediction on a bipartite User-Merchant graph.
+    
+    In the link prediction approach:
+    - Users and Merchants are nodes with their own features
+    - Transactions are edges between users and merchants
+    - Edge features are the transaction attributes
+    - Edge labels are the fraud indicators
     
     Args:
         cleaned_data_bundle: Output from load_and_clean_tabformer
         output_dir: Directory to save graph data. If None, uses config.output_dir
         data_split_year: Year to split data. If None, uses config.test_split_year
         xgb_transformer: Transformer from XGBoost feature generation
-        columns_of_transformed_data: Feature columns from XGBoost
+        columns_of_transformed_txs: Feature columns from XGBoost (transaction features)
         config: Configuration object. If None, uses config from cleaned_data_bundle or default
         
     Returns:
-        Dictionary containing graph data and metadata
+        Tuple of (user_mask_map, merchant_mask_map, transaction_mask_map)
     """
     if config is None:
         config = cleaned_data_bundle.get('config', default_config)
@@ -75,154 +89,157 @@ def generate_gnn_graph_data(
     # Get transformer and feature columns from XGBoost if not provided
     if xgb_transformer is None:
         xgb_transformer = cleaned_data_bundle.get('xgb_transformer')
-    if columns_of_transformed_data is None:
-        columns_of_transformed_data = cleaned_data_bundle.get('xgb_feature_columns', [])
-    """
-    Generate GNN graph, node features, and node labels from cleaned TabFormer data.
+    if columns_of_transformed_txs is None:
+        columns_of_transformed_txs = cleaned_data_bundle.get('xgb_feature_columns', [])
 
-    Args:
-        cleaned_data_bundle (dict): Output from load_and_clean_tabformer.
-        output_dir (str): Directory to write GNN graph files.
-        data_split_year (int): Year to split data into train/validation/test splits.
-    """
     data = cleaned_data_bundle["data"]
     id_transformer = cleaned_data_bundle["id_transformer"]
-    columns_of_transformed_id_data = cleaned_data_bundle[
-        "columns_of_transformed_id_data"
+    columns_of_transformed_id_data = cleaned_data_bundle["columns_of_transformed_id_data"]
+    
+    # Build type mapping for transaction features
+    numerical_predictors = [config.COL_AMOUNT]
+    nominal_predictors = [
+        config.COL_ERROR, config.COL_CARD, config.COL_CHIP, 
+        config.COL_CITY, config.COL_ZIP, config.COL_MCC, config.COL_MERCHANT
     ]
+    predictor_columns = list(set(nominal_predictors) - set(config.MERCHANT_AND_USER_COLS)) + numerical_predictors
+    
+    type_mapping = {}
+    for col in columns_of_transformed_txs:
+        if col.split("_")[0] in nominal_predictors:
+            type_mapping[col] = "int8"
+        elif col in numerical_predictors:
+            type_mapping[col] = "float"
+    
     # Split data using config
     training_idx = data[config.COL_YEAR] < data_split_year
     validation_idx = data[config.COL_YEAR] == data_split_year
     test_idx = data[config.COL_YEAR] > data_split_year
 
-    # For GNN, use train+val for main graph, test for test graph
-    def process_gnn_split(sub_data, out_dir):
+    # Separate user and merchant feature columns
+    user_feature_columns = [c for c in columns_of_transformed_id_data if c.startswith("Card")]
+    mx_feature_columns = [c for c in columns_of_transformed_id_data if not c.startswith("Card")]
+
+    def process_gnn_split(sub_data, out_dir, is_test=False):
+        """Process a data split for bipartite link prediction GNN."""
         sub_data = sub_data.copy().reset_index(drop=True)
         sub_data[config.COL_TRANSACTION_ID] = sub_data.index
+        
+        # Create merchant ID mapping
         merchant_name_to_id = dict(
-            zip(
-                sub_data[config.COL_MERCHANT].unique(),
-                np.arange(len(sub_data[config.COL_MERCHANT].unique())),
-            )
+            zip(sub_data[config.COL_MERCHANT].unique(), 
+                np.arange(len(sub_data[config.COL_MERCHANT].unique())))
         )
         sub_data[config.COL_MERCHANT_ID] = sub_data[config.COL_MERCHANT].map(merchant_name_to_id)
+        
+        # Create user ID mapping
         id_to_consecutive_id = dict(
-            zip(
-                sub_data[config.COL_CARD].unique(), 
-                np.arange(len(sub_data[config.COL_CARD].unique()))
-            )
+            zip(sub_data[config.COL_CARD].unique(), 
+                np.arange(len(sub_data[config.COL_CARD].unique())))
         )
         sub_data[config.COL_USER_ID] = sub_data[config.COL_CARD].map(id_to_consecutive_id)
-        NR_USERS = sub_data[config.COL_USER_ID].max() + 1
-        NR_MXS = sub_data[config.COL_MERCHANT_ID].max() + 1
-        NR_TXS = sub_data[config.COL_TRANSACTION_ID].max() + 1
-        # Check the the transaction, merchant and user ids are consecutive
-        id_range = sub_data[config.COL_TRANSACTION_ID].min(), sub_data[config.COL_TRANSACTION_ID].max()
-        print(f"Transaction ID range {id_range}")
+        
+        # Print ID ranges
         id_range = sub_data[config.COL_MERCHANT_ID].min(), sub_data[config.COL_MERCHANT_ID].max()
         print(f"Merchant ID range {id_range}")
         id_range = sub_data[config.COL_USER_ID].min(), sub_data[config.COL_USER_ID].max()
         print(f"User ID range {id_range}")
-        # Edges
-        U_2_T = pd.DataFrame(
-            {
-                config.COL_GRAPH_SRC: sub_data[config.COL_USER_ID],
-                config.COL_GRAPH_DST: sub_data[config.COL_TRANSACTION_ID] + NR_USERS + NR_MXS,
-            }
-        )
-        T_2_M = pd.DataFrame(
-            {
-                config.COL_GRAPH_SRC: sub_data[config.COL_TRANSACTION_ID] + NR_USERS + NR_MXS,
-                config.COL_GRAPH_DST: sub_data[config.COL_MERCHANT_ID] + NR_USERS,
-            }
-        )
-        T_2_U = pd.DataFrame(
-            {
-                config.COL_GRAPH_SRC: sub_data[config.COL_TRANSACTION_ID] + NR_USERS + NR_MXS,
-                config.COL_GRAPH_DST: sub_data[config.COL_USER_ID],
-            }
-        )
-        M_2_T = pd.DataFrame(
-            {
-                config.COL_GRAPH_SRC: sub_data[config.COL_MERCHANT_ID] + NR_USERS,
-                config.COL_GRAPH_DST: sub_data[config.COL_TRANSACTION_ID] + NR_USERS + NR_MXS,
-            }
-        )
-        edges = pd.concat([U_2_T, T_2_M, T_2_U, M_2_T], ignore_index=True)
+        
+        # ---- Create Edges (User to Merchant) in COO format ----
+        U_2_M = cudf.DataFrame()
+        U_2_M[config.COL_GRAPH_SRC] = sub_data[config.COL_USER_ID]
+        U_2_M[config.COL_GRAPH_DST] = sub_data[config.COL_MERCHANT_ID]
+        Edge = cudf.concat([U_2_M])
+        
         os.makedirs(os.path.join(out_dir, "edges"), exist_ok=True)
-        edges.to_csv(os.path.join(out_dir, "edges", "node_to_node.csv"), index=False)
-        # Node features
+        out_path = os.path.join(out_dir, "edges/user_to_merchant.csv")
+        Edge.to_csv(out_path, header=True, index=False)
+        
+        # ---- Transaction features (become edge attributes) ----
+        transaction_feature_df = pd.DataFrame(
+            xgb_transformer.transform(sub_data[predictor_columns]),
+            columns=columns_of_transformed_txs,
+        ).astype(type_mapping)
+        transaction_feature_df[config.COL_FRAUD] = sub_data[config.COL_FRAUD]
+        
+        # ---- Node features ----
+        # Merchant features
         data_merchant = sub_data[[config.COL_MERCHANT, config.COL_MCC, config.COL_CARD]].drop_duplicates(
             subset=[config.COL_MERCHANT]
         )
-        data_merchant[config.COL_MERCHANT_ID] = data_merchant[config.COL_MERCHANT].map(
-            merchant_name_to_id
-        )
+        data_merchant[config.COL_MERCHANT_ID] = data_merchant[config.COL_MERCHANT].map(merchant_name_to_id)
         data_merchant_sorted = data_merchant.sort_values(by=config.COL_MERCHANT_ID)
+        
+        # User features
         data_user = sub_data[[config.COL_MERCHANT, config.COL_MCC, config.COL_CARD]].drop_duplicates(
             subset=[config.COL_CARD]
         )
         data_user[config.COL_USER_ID] = data_user[config.COL_CARD].map(id_to_consecutive_id)
         data_user_sorted = data_user.sort_values(by=config.COL_USER_ID)
-        user_feature_columns = [
-            c for c in columns_of_transformed_id_data if c.startswith("Card")
-        ]
-        mx_feature_columns = [
-            c for c in columns_of_transformed_id_data if not c.startswith("Card")
-        ]
+        
         preprocessed_merchant_data = pd.DataFrame(
             id_transformer.transform(data_merchant_sorted[config.MERCHANT_AND_USER_COLS]),
             columns=columns_of_transformed_id_data,
         )[mx_feature_columns]
+        
         preprocessed_user_data = pd.DataFrame(
             id_transformer.transform(data_user_sorted[config.MERCHANT_AND_USER_COLS]),
             columns=columns_of_transformed_id_data,
         )[user_feature_columns]
-        # Transaction features: use all XGBoost features (columns_of_transformed_data), not just ID columns
-        numerical_predictors = [config.COL_AMOUNT]
-        nominal_predictors = [
-            config.COL_ERROR, config.COL_CARD, config.COL_CHIP, config.COL_CITY, config.COL_ZIP, config.COL_MCC, config.COL_MERCHANT
-        ]
-        predictors = list(set(nominal_predictors) - set(config.MERCHANT_AND_USER_COLS)) + numerical_predictors
-        transaction_feature_df = pd.DataFrame(
-            xgb_transformer.transform(sub_data[predictors]),
-            columns=columns_of_transformed_data,
-        )
-        T = transaction_feature_df.values
-        U = preprocessed_user_data.values
-        M = preprocessed_merchant_data.values
-        combined_cols = user_feature_columns + mx_feature_columns + list(columns_of_transformed_data)
-        node_feature_df = pd.DataFrame(block_diag(U, M, T), columns=combined_cols)
-
+        
+        # ---- Write node features ----
         os.makedirs(os.path.join(out_dir, "nodes"), exist_ok=True)
-        node_feature_df.to_csv(os.path.join(out_dir, "nodes", "node.csv"), index=False)
-        # Node labels
-        node_label_df = pd.DataFrame(
-            np.zeros(len(node_feature_df), dtype=int), columns=[config.COL_FRAUD]
+        
+        # User features
+        out_path = os.path.join(out_dir, "nodes/user.csv")
+        preprocessed_user_data.to_csv(out_path, header=True, index=False, columns=user_feature_columns)
+        
+        # Merchant features
+        out_path = os.path.join(out_dir, "nodes/merchant.csv")
+        preprocessed_merchant_data.to_csv(out_path, header=True, index=False, columns=mx_feature_columns)
+        
+        # ---- Write edge labels (fraud indicator) ----
+        out_path = os.path.join(out_dir, "edges/user_to_merchant_label.csv")
+        transaction_feature_df[[config.COL_FRAUD]].to_csv(
+            out_path, header=True, index=False, columns=[config.COL_FRAUD]
         )
-        node_label_df.iloc[NR_USERS + NR_MXS : NR_USERS + NR_MXS + NR_TXS, 0] = (
-            sub_data[config.COL_FRAUD].values
+        
+        # ---- Write edge attributes (transaction features) ----
+        out_path = os.path.join(out_dir, "edges/user_to_merchant_attr.csv")
+        transaction_feature_df[columns_of_transformed_txs].to_csv(
+            out_path, header=True, index=False, columns=columns_of_transformed_txs
         )
-        node_label_df.to_csv(
-            os.path.join(out_dir, "nodes", "node_label.csv"), index=False
-        )
-        # Offset metadata
-        with open(
-            os.path.join(out_dir, "nodes", "offset_range_of_training_node.json"), "w"
-        ) as json_file:
-            json.dump(
-                {
-                    "start": int(NR_USERS + NR_MXS),
-                    "end": int(NR_USERS + NR_MXS + NR_TXS),
-                },
-                json_file,
-                indent=4,
-            )
-        return node_feature_df, node_label_df   
+        
+        return user_feature_columns, mx_feature_columns, columns_of_transformed_txs
 
-    # Train+val
-    _, _ = process_gnn_split(data[training_idx | validation_idx], output_dir)
-    # Test  
-    node_feature_df_test, _ = process_gnn_split(data[test_idx], os.path.join(output_dir, "test_gnn"))
-
-    return create_feature_mask(node_feature_df_test.columns) 
+    # ---- Process train+val data ----
+    data_all = data.copy()
+    train_val_data = pd.concat([data[training_idx], data[validation_idx]])
+    train_val_data.reset_index(inplace=True, drop=True)
+    
+    user_feat_cols, mx_feat_cols, tx_feat_cols = process_gnn_split(train_val_data, output_dir)
+    
+    # ---- Process test data ----
+    test_data = data_all[test_idx].copy()
+    test_out_dir = os.path.join(output_dir, "test_gnn")
+    process_gnn_split(test_data, test_out_dir, is_test=True)
+    
+    # ---- Create and save feature masks for test data ----
+    user_mask_map, user_mask = create_feature_mask(user_feat_cols, 0)
+    mx_mask_map, mx_mask = create_feature_mask(mx_feat_cols, np.max(user_mask) + 1)
+    tx_mask_map, tx_mask = create_feature_mask(tx_feat_cols, np.max(mx_mask) + 1)
+    
+    np.savetxt(
+        os.path.join(test_out_dir, "nodes/user_feature_mask.csv"),
+        user_mask, delimiter=",", fmt="%d"
+    )
+    np.savetxt(
+        os.path.join(test_out_dir, "nodes/merchant_feature_mask.csv"),
+        mx_mask, delimiter=",", fmt="%d"
+    )
+    np.savetxt(
+        os.path.join(test_out_dir, "edges/user_to_merchant_feature_mask.csv"),
+        tx_mask, delimiter=",", fmt="%d"
+    )
+    
+    return user_mask_map, mx_mask_map, tx_mask_map 
