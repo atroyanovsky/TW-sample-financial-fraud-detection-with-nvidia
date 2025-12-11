@@ -1,6 +1,49 @@
 """Configuration for the financial fraud detection pipeline."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
+
+
+@dataclass
+class GNNHyperparameters:
+    """Hyperparameters for GNN model."""
+    hidden_channels: int = 32
+    n_hops: int = 2
+    layer: str = "SAGEConv"
+    dropout_prob: float = 0.1
+    batch_size: int = 4096
+    fan_out: int = 10
+    num_epochs: int = 20
+
+
+@dataclass
+class XGBHyperparameters:
+    """Hyperparameters for XGBoost model."""
+    max_depth: int = 6
+    learning_rate: float = 0.2
+    num_parallel_tree: int = 3
+    num_boost_round: int = 512
+    gamma: float = 0.0
+
+
+@dataclass
+class ModelConfig:
+    """Configuration for a single model."""
+    kind: str = "GNN_XGBoost"
+    gpu: str = "single"
+    gnn: GNNHyperparameters = field(default_factory=GNNHyperparameters)
+    xgb: XGBHyperparameters = field(default_factory=XGBHyperparameters)
+
+
+@dataclass
+class TrainingConfig:
+    """Configuration for training paths and models."""
+    # Paths (SageMaker defaults)
+    data_dir: str = "/opt/ml/input/data/data"
+    output_dir: str = "/opt/ml/model"
+    
+    # Models
+    models: List[ModelConfig] = field(default_factory=lambda: [ModelConfig()])
+
 
 @dataclass
 class DataConfig:
@@ -91,3 +134,31 @@ default_config = DataConfig(
 
 # Initialize the config to set up all constants
 default_config.__post_init__()
+
+# Default training configuration (from config.yaml)
+default_training_config = TrainingConfig(
+    data_dir="/opt/ml/input/data/data",
+    output_dir="/opt/ml/model",
+    models=[
+        ModelConfig(
+            kind="GNN_XGBoost",
+            gpu="single",
+            gnn=GNNHyperparameters(
+                hidden_channels=32,
+                n_hops=2,
+                layer="SAGEConv",
+                dropout_prob=0.1,
+                batch_size=4096,
+                fan_out=10,
+                num_epochs=20
+            ),
+            xgb=XGBHyperparameters(
+                max_depth=6,
+                learning_rate=0.2,
+                num_parallel_tree=3,
+                num_boost_round=512,
+                gamma=0.0
+            )
+        )
+    ]
+)
