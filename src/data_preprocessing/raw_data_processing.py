@@ -5,6 +5,7 @@ Module for loading, cleaning, and encoding the raw TabFormer credit card transac
 """
 
 from typing import Dict, Any
+import pyarrow  # Must import before cudf to avoid ArrowKeyError
 import cudf
 import pandas as pd
 import numpy as np

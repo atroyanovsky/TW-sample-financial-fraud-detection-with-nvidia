@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, List, Tuple
 import os
 import numpy as np
 import pandas as pd
+import pyarrow  # Must import before cudf to avoid ArrowKeyError
 import cudf
 import sys
 
@@ -146,6 +147,8 @@ def generate_gnn_graph_data(
         sub_data[config.COL_USER_ID] = sub_data[config.COL_CARD].map(id_to_consecutive_id)
         
         # Print ID ranges
+        id_range = sub_data[config.COL_TRANSACTION_ID].min(), sub_data[config.COL_TRANSACTION_ID].max()
+        print(f"Transaction ID range {id_range}")
         id_range = sub_data[config.COL_MERCHANT_ID].min(), sub_data[config.COL_MERCHANT_ID].max()
         print(f"Merchant ID range {id_range}")
         id_range = sub_data[config.COL_USER_ID].min(), sub_data[config.COL_USER_ID].max()
