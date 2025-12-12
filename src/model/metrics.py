@@ -16,6 +16,100 @@ from sklearn.metrics import (
 
 from .sagemaker_inference import prepare_and_send_inference_request
 
+def scan_thresholds(y, predictions, step=0.01):
+    """
+    Scan all thresholds from 0 to 1 and compute precision, recall, and F1 for each.
+    Plots the curves and highlights the optimal F1 threshold and default 0.5 threshold.
+    
+    Args:
+        y: Ground truth binary labels
+        predictions: Prediction probabilities (0-1)
+        step: Threshold step size (default 0.01)
+    
+    Returns:
+        dict with thresholds, precision, recall, f1 arrays and best threshold info
+    """
+    thresholds = np.arange(0, 1 + step, step)
+    precisions = []
+    recalls = []
+    f1_scores = []
+    
+    for thresh in thresholds:
+        y_pred = (predictions > thresh).astype(int)
+        precisions.append(precision_score(y, y_pred, zero_division=0))
+        recalls.append(recall_score(y, y_pred, zero_division=0))
+        f1_scores.append(f1_score(y, y_pred, zero_division=0))
+    
+    precisions = np.array(precisions)
+    recalls = np.array(recalls)
+    f1_scores = np.array(f1_scores)
+    
+    # Find best F1 threshold
+    best_idx = np.argmax(f1_scores)
+    best_threshold = thresholds[best_idx]
+    best_f1 = f1_scores[best_idx]
+    
+    # Get metrics at default 0.5 threshold
+    default_idx = int(0.5 / step)
+    default_f1 = f1_scores[default_idx]
+    default_precision = precisions[default_idx]
+    default_recall = recalls[default_idx]
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    ax.plot(thresholds, precisions, label='Precision', color='blue', linewidth=2)
+    ax.plot(thresholds, recalls, label='Recall', color='green', linewidth=2)
+    ax.plot(thresholds, f1_scores, label='F1 Score', color='red', linewidth=2)
+    
+    # Mark best F1 threshold
+    ax.axvline(x=best_threshold, color='red', linestyle='--', alpha=0.7, 
+               label=f'Best F1 threshold: {best_threshold:.2f} (F1={best_f1:.4f})')
+    ax.scatter([best_threshold], [best_f1], color='red', s=100, zorder=5, marker='*')
+    
+    # Mark default 0.5 threshold
+    ax.axvline(x=0.5, color='gray', linestyle=':', alpha=0.7,
+               label=f'Default threshold: 0.50 (F1={default_f1:.4f})')
+    ax.scatter([0.5], [default_f1], color='gray', s=100, zorder=5, marker='o')
+    
+    ax.set_xlabel('Decision Threshold', fontsize=12)
+    ax.set_ylabel('Score', fontsize=12)
+    ax.set_title('Precision, Recall, and F1 Score vs Decision Threshold', fontsize=14)
+    ax.legend(loc='best')
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1.05])
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Print summary
+    print("\n" + "="*60)
+    print("  THRESHOLD ANALYSIS SUMMARY")
+    print("="*60)
+    print(f"\n  Best F1 Threshold: {best_threshold:.2f}")
+    print(f"    - Precision: {precisions[best_idx]:.4f}")
+    print(f"    - Recall:    {recalls[best_idx]:.4f}")
+    print(f"    - F1 Score:  {best_f1:.4f}")
+    print(f"\n  Default Threshold (0.50):")
+    print(f"    - Precision: {default_precision:.4f}")
+    print(f"    - Recall:    {default_recall:.4f}")
+    print(f"    - F1 Score:  {default_f1:.4f}")
+    print(f"\n  F1 Improvement: {(best_f1 - default_f1):.4f} ({(best_f1 - default_f1) / default_f1 * 100:.2f}%)" if default_f1 > 0 else "")
+    print("="*60)
+    
+    return {
+        'thresholds': thresholds,
+        'precisions': precisions,
+        'recalls': recalls,
+        'f1_scores': f1_scores,
+        'best_threshold': best_threshold,
+        'best_f1': best_f1,
+        'best_precision': precisions[best_idx],
+        'best_recall': recalls[best_idx]
+    }
+
+
 def compute_score_for_batch(y, predictions, decision_threshold = 0.5):
     # Apply threshold
     y_pred = (predictions > decision_threshold).astype(int)

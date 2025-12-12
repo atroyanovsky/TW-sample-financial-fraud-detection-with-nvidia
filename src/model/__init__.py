@@ -7,6 +7,7 @@ from .sagemaker_inference import (
 )
 from .metrics import (
     compute_score_for_batch,
+    scan_thresholds,
     measure_latency_for_samples,
     print_latency_stats,
     measure_throughput,
