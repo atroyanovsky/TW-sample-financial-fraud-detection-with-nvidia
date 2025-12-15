@@ -164,11 +164,35 @@ def load_and_clean_ieee_cis(
     data['datetime'] = data['TransactionDT'].apply(
         lambda x: reference_date + timedelta(seconds=int(x))
     )
-    data[config.COL_YEAR] = data['datetime'].dt.year.astype('int16')
+    data['RealYear'] = data['datetime'].dt.year.astype('int16')
     data[config.COL_MONTH] = data['datetime'].dt.month.astype('int8')
     data[config.COL_DAY] = data['datetime'].dt.day.astype('int8')
     data[config.COL_TIME] = (data['datetime'].dt.hour * 60 + data['datetime'].dt.minute).astype('int32')
     data.drop(columns=['datetime'], inplace=True)
+    
+    # Create synthetic Year column for train/val/test split
+    # IEEE-CIS data spans ~6 months, so we map TransactionDT to "virtual years"
+    # to be compatible with the year-based splitting in xgboost/gnn generation
+    # Split: 60% train (Year<2018), 20% val (Year==2018), 20% test (Year>2018)
+    print("Creating virtual year column for data splitting...")
+    dt_min = data['TransactionDT'].min()
+    dt_max = data['TransactionDT'].max()
+    dt_range = dt_max - dt_min
+    
+    # Map to virtual years: 2017 (train), 2018 (val), 2019 (test)
+    # 60% → 2017, 20% → 2018, 20% → 2019
+    train_threshold = dt_min + 0.6 * dt_range
+    val_threshold = dt_min + 0.8 * dt_range
+    
+    data[config.COL_YEAR] = 2017  # Default to training year
+    data.loc[data['TransactionDT'] >= train_threshold, config.COL_YEAR] = 2018
+    data.loc[data['TransactionDT'] >= val_threshold, config.COL_YEAR] = 2019
+    data[config.COL_YEAR] = data[config.COL_YEAR].astype('int16')
+    
+    print(f"  Virtual year distribution:")
+    print(f"    2017 (train): {(data[config.COL_YEAR] == 2017).sum()} samples")
+    print(f"    2018 (val):   {(data[config.COL_YEAR] == 2018).sum()} samples")
+    print(f"    2019 (test):  {(data[config.COL_YEAR] == 2019).sum()} samples")
     
     # Card identifier: combine card1, card2, card3 for unique card ID
     print("Creating card identifiers...")
