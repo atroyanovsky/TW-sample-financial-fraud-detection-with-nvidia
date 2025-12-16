@@ -20,7 +20,7 @@ DATA_CONFIG_MAP = "fraud-detection-config"
     description="End-to-end data preprocessing for TabFormer fraud detection: "
     "load -> clean -> split -> transform -> prepare XGB/GNN datasets",
 )
-def tabformer_preprocessing_pipeline(
+def cc_data_preprocessing_pipeline(
     s3_region: str = "us-east-1",
     under_sample: bool = True,
     fraud_ratio: float = 0.1,
@@ -105,7 +105,7 @@ def tabformer_preprocessing_pipeline(
 
 if __name__ == "__main__":
     compiler.Compiler().compile(
-        pipeline_func=tabformer_preprocessing_pipeline,
-        package_path="tabformer_preprocessing_pipeline.yaml",
+        pipeline_func=cc_data_preprocessing_pipeline,
+        package_path="cc_data_preprocessing_pipeline.yaml",
     )
-    print("Pipeline compiled to tabformer_preprocessing_pipeline.yaml")
+    print("Pipeline compiled to cc_data_preprocessing_pipeline.yaml")
