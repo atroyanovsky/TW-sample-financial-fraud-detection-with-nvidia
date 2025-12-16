@@ -1,5 +1,5 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
-# Licensed under the Apache License, Version 2.0
+# Copyright (c) 2025, Amazon Web Services, Inc.
+# Code modified by vshardul@amazon.com based on Apache License, Version 2.0 code provided by NVIDIA Corporation.
 """Shared transformation utilities for TabFormer preprocessing."""
 
 import numpy as np
@@ -21,13 +21,16 @@ def cramers_v(x, y):
     # Handle both pandas and cudf
     try:
         import cudf
+
         if isinstance(x, cudf.Series):
             confusion_matrix = cudf.crosstab(x, y).to_numpy()
         else:
             import pandas as pd
+
             confusion_matrix = pd.crosstab(x, y).to_numpy()
     except ImportError:
         import pandas as pd
+
         confusion_matrix = pd.crosstab(x, y).to_numpy()
 
     chi2 = ss.chi2_contingency(confusion_matrix)[0]
@@ -36,7 +39,9 @@ def cramers_v(x, y):
     return np.sqrt(chi2 / (n * (min(k - 1, r - 1))))
 
 
-def create_feature_mask(columns: list[str], start_mask_id: int = 0) -> tuple[dict, np.ndarray]:
+def create_feature_mask(
+    columns: list[str], start_mask_id: int = 0
+) -> tuple[dict, np.ndarray]:
     """Create a feature mask mapping columns to feature group IDs.
 
     For encoded columns (containing '_'), groups by the base feature name.
@@ -66,8 +71,13 @@ def create_feature_mask(columns: list[str], start_mask_id: int = 0) -> tuple[dic
     return mask_mapping, np.array(mask_values)
 
 
-def compute_correlations(data, target_col: str, categorical_cols: list[str],
-                         numerical_cols: list[str], sparse_factor: int = 1) -> dict:
+def compute_correlations(
+    data,
+    target_col: str,
+    categorical_cols: list[str],
+    numerical_cols: list[str],
+    sparse_factor: int = 1,
+) -> dict:
     """Compute correlations between features and target.
 
     Args:

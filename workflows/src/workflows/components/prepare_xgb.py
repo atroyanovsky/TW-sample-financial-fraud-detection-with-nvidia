@@ -1,9 +1,9 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
-# Licensed under the Apache License, Version 2.0
+# Copyright (c) 2025, Amazon Web Services, Inc.
+# Code modified by vshardul@amazon.com based on Apache License, Version 2.0 code provided by NVIDIA Corporation.
 """Component: Prepare XGBoost-ready datasets."""
 
 from kfp import dsl
-from kfp.dsl import Dataset, Input, Output, Artifact, Metrics
+from kfp.dsl import Artifact, Dataset, Input, Metrics, Output
 
 
 @dsl.component(
@@ -44,8 +44,9 @@ def prepare_xgb_datasets(
     Returns:
         Dict with transformation statistics
     """
-    import pandas as pd
     import pickle
+
+    import pandas as pd
 
     COL_FRAUD = "Fraud"
 
@@ -75,7 +76,9 @@ def prepare_xgb_datasets(
         result = pd.DataFrame(transformed, columns=output_columns)
 
         # Transform IDs
-        id_transformed = id_transformer.transform(df[merchant_user_cols].astype("category"))
+        id_transformed = id_transformer.transform(
+            df[merchant_user_cols].astype("category")
+        )
         id_df = pd.DataFrame(id_transformed, columns=id_columns)
 
         # Combine
@@ -94,7 +97,9 @@ def prepare_xgb_datasets(
         result.to_csv(output_path, index=False)
 
         fraud_count = result[COL_FRAUD].sum()
-        print(f"{split_name}: {n_records:,} records, {fraud_count:,} fraud, {result.shape[1]} features")
+        print(
+            f"{split_name}: {n_records:,} records, {fraud_count:,} fraud, {result.shape[1]} features"
+        )
 
         return {
             "records": n_records,

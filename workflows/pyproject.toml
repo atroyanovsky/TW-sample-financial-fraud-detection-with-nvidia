@@ -3,11 +3,19 @@ name = "workflows"
 version = "0.1.0"
 description = "Pipeline workflows for Sample Financial Fraud Detection with Nvidia for Kubeflow"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
-    "kfp"
+    "kfp>=2.5.0",
+    "kfp-kubernetes>=1.4.0",
+    "pandas>=2.3.3",
+    "pyarrow>=22.0.0",
+    "scikit-learn>=1.8.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "docker>=7.0.0",
+]
 
 [build-system]
 requires = ["hatchling"]

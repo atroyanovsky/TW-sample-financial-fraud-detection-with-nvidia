@@ -1,9 +1,9 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
-# Licensed under the Apache License, Version 2.0
+# Copyright (c) 2025, Amazon Web Services, Inc.
+# Code modified by vshardul@amazon.com based on Apache License, Version 2.0 code provided by NVIDIA Corporation.
 """Component: Prepare GNN graph data (edges, node features, masks)."""
 
 from kfp import dsl
-from kfp.dsl import Dataset, Input, Output, Artifact, Metrics
+from kfp.dsl import Artifact, Dataset, Input, Metrics, Output
 
 
 @dsl.component(
@@ -61,9 +61,10 @@ def prepare_gnn_datasets(
     Returns:
         Dict with graph statistics
     """
-    import pandas as pd
-    import numpy as np
     import pickle
+
+    import numpy as np
+    import pandas as pd
 
     # Constants
     COL_MERCHANT = "Merchant"
@@ -126,13 +127,17 @@ def prepare_gnn_datasets(
         n_merchants = data[COL_MERCHANT_ID].max() + 1
         n_edges = len(data)
 
-        print(f"{prefix}: {n_users:,} users, {n_merchants:,} merchants, {n_edges:,} edges")
+        print(
+            f"{prefix}: {n_users:,} users, {n_merchants:,} merchants, {n_edges:,} edges"
+        )
 
         # Create edge list (User -> Merchant)
-        edges = pd.DataFrame({
-            COL_GRAPH_SRC: data[COL_USER_ID],
-            COL_GRAPH_DST: data[COL_MERCHANT_ID],
-        })
+        edges = pd.DataFrame(
+            {
+                COL_GRAPH_SRC: data[COL_USER_ID],
+                COL_GRAPH_DST: data[COL_MERCHANT_ID],
+            }
+        )
 
         # Transform transaction features (edge attributes)
         tx_features = pd.DataFrame(
@@ -147,23 +152,31 @@ def prepare_gnn_datasets(
         edge_labels = data[[COL_FRAUD]].copy()
 
         # Get unique merchants sorted by ID
-        merchant_data = data[[COL_MERCHANT, COL_MCC, COL_CARD, COL_MERCHANT_ID]].drop_duplicates(
-            subset=[COL_MERCHANT]
-        ).sort_values(COL_MERCHANT_ID)
+        merchant_data = (
+            data[[COL_MERCHANT, COL_MCC, COL_CARD, COL_MERCHANT_ID]]
+            .drop_duplicates(subset=[COL_MERCHANT])
+            .sort_values(COL_MERCHANT_ID)
+        )
 
         # Get unique users sorted by ID
-        user_data = data[[COL_MERCHANT, COL_MCC, COL_CARD, COL_USER_ID]].drop_duplicates(
-            subset=[COL_CARD]
-        ).sort_values(COL_USER_ID)
+        user_data = (
+            data[[COL_MERCHANT, COL_MCC, COL_CARD, COL_USER_ID]]
+            .drop_duplicates(subset=[COL_CARD])
+            .sort_values(COL_USER_ID)
+        )
 
         # Transform ID features
         merchant_id_features = pd.DataFrame(
-            id_transformer.transform(merchant_data[MERCHANT_AND_USER_COLS].astype("category")),
+            id_transformer.transform(
+                merchant_data[MERCHANT_AND_USER_COLS].astype("category")
+            ),
             columns=id_columns,
         )[merchant_feature_columns]
 
         user_id_features = pd.DataFrame(
-            id_transformer.transform(user_data[MERCHANT_AND_USER_COLS].astype("category")),
+            id_transformer.transform(
+                user_data[MERCHANT_AND_USER_COLS].astype("category")
+            ),
             columns=id_columns,
         )[user_feature_columns]
 
@@ -190,7 +203,9 @@ def prepare_gnn_datasets(
     train_graph = prepare_graph(train_combined, "Train")
     train_graph["edges"].to_csv(gnn_train_edges.path, index=False)
     train_graph["user_features"].to_csv(gnn_train_user_features.path, index=False)
-    train_graph["merchant_features"].to_csv(gnn_train_merchant_features.path, index=False)
+    train_graph["merchant_features"].to_csv(
+        gnn_train_merchant_features.path, index=False
+    )
     train_graph["edge_features"].to_csv(gnn_train_edge_features.path, index=False)
     train_graph["edge_labels"].to_csv(gnn_train_edge_labels.path, index=False)
 
@@ -214,17 +229,20 @@ def prepare_gnn_datasets(
 
     # Save feature masks
     with open(feature_masks_artifact.path, "wb") as f:
-        pickle.dump({
-            "user_mask": user_mask,
-            "merchant_mask": merchant_mask,
-            "transaction_mask": tx_mask,
-            "user_mask_map": user_mask_map,
-            "merchant_mask_map": merchant_mask_map,
-            "transaction_mask_map": tx_mask_map,
-            "user_columns": user_feature_columns,
-            "merchant_columns": merchant_feature_columns,
-            "transaction_columns": tx_feature_columns,
-        }, f)
+        pickle.dump(
+            {
+                "user_mask": user_mask,
+                "merchant_mask": merchant_mask,
+                "transaction_mask": tx_mask,
+                "user_mask_map": user_mask_map,
+                "merchant_mask_map": merchant_mask_map,
+                "transaction_mask_map": tx_mask_map,
+                "user_columns": user_feature_columns,
+                "merchant_columns": merchant_feature_columns,
+                "transaction_columns": tx_feature_columns,
+            },
+            f,
+        )
 
     # Log metrics
     metrics.log_metric("train_users", train_graph["stats"]["n_users"])

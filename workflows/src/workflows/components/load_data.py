@@ -1,9 +1,9 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
-# Licensed under the Apache License, Version 2.0
+# Copyright (c) 2025, Amazon Web Services, Inc.
+# Code modified by vshardul@amazon.com based on Apache License, Version 2.0 code provided by NVIDIA Corporation.
 """Component: Load raw TabFormer data from S3 or local filesystem."""
 
 from kfp import dsl
-from kfp.dsl import Dataset, Output, Metrics
+from kfp.dsl import Dataset, Metrics, Output
 
 
 @dsl.component(
@@ -11,32 +11,38 @@ from kfp.dsl import Dataset, Output, Metrics
     packages_to_install=["pandas==2.2.0", "boto3==1.34.0", "pyarrow==15.0.0"],
 )
 def load_raw_data(
-    source_path: str,
     raw_data: Output[Dataset],
     metrics: Output[Metrics],
-    s3_bucket: str = "",
     s3_region: str = "us-east-1",
 ) -> dict:
     """Load raw TabFormer credit card transaction data.
 
-    Supports both S3 and local filesystem sources. For S3, provide bucket name
-    and use source_path as the key. For local, provide full path in source_path.
+    Reads source_path and s3_bucket from environment variables (injected via ConfigMap).
+    For S3, provide bucket name and source_path as the key.
+    For local, leave S3_BUCKET empty and use SOURCE_PATH as full path.
+
+    Environment Variables (from ConfigMap):
+        SOURCE_PATH: Path to CSV file (S3 key if S3_BUCKET set, else local path)
+        S3_BUCKET: Optional S3 bucket name (empty for local file)
 
     Args:
-        source_path: Path to CSV file (S3 key if s3_bucket provided, else local path)
         raw_data: Output artifact for raw dataset
         metrics: Output metrics artifact
-        s3_bucket: Optional S3 bucket name (empty for local file)
         s3_region: AWS region for S3 access
 
     Returns:
         Dict with loading statistics
     """
-    import pandas as pd
     import os
+
+    import pandas as pd
+
+    source_path = os.environ.get("SOURCE_PATH", "./data/raw/card_transaction.v1.csv")
+    s3_bucket = os.environ.get("S3_BUCKET", "")
 
     if s3_bucket:
         import boto3
+
         s3 = boto3.client("s3", region_name=s3_region)
         local_tmp = "/tmp/raw_data.csv"
         print(f"Downloading s3://{s3_bucket}/{source_path}")

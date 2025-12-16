@@ -1,9 +1,9 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
-# Licensed under the Apache License, Version 2.0
+# Copyright (c) 2025, Amazon Web Services, Inc.
+# Code modified by vshardul@amazon.com based on Apache License, Version 2.0 code provided by NVIDIA Corporation.
 """Component: Split data by year into train/validation/test sets."""
 
 from kfp import dsl
-from kfp.dsl import Dataset, Input, Output, Metrics
+from kfp.dsl import Dataset, Input, Metrics, Output
 
 
 @dsl.component(
@@ -56,8 +56,9 @@ def split_by_year(
     test_df = data[test_mask].reset_index(drop=True)
 
     # Validate split covers all data
-    assert len(train_df) + len(validation_df) + len(test_df) == total_count, \
+    assert len(train_df) + len(validation_df) + len(test_df) == total_count, (
         "Split does not account for all records"
+    )
 
     # Calculate statistics
     stats = {
@@ -65,14 +66,24 @@ def split_by_year(
         "train_records": len(train_df),
         "validation_records": len(validation_df),
         "test_records": len(test_df),
-        "train_fraud_rate": float(train_df[COL_FRAUD].mean()) if len(train_df) > 0 else 0,
-        "validation_fraud_rate": float(validation_df[COL_FRAUD].mean()) if len(validation_df) > 0 else 0,
+        "train_fraud_rate": float(train_df[COL_FRAUD].mean())
+        if len(train_df) > 0
+        else 0,
+        "validation_fraud_rate": float(validation_df[COL_FRAUD].mean())
+        if len(validation_df) > 0
+        else 0,
         "test_fraud_rate": float(test_df[COL_FRAUD].mean()) if len(test_df) > 0 else 0,
     }
 
-    print(f"Train: {stats['train_records']:,} ({100*stats['train_records']/total_count:.1f}%)")
-    print(f"Validation: {stats['validation_records']:,} ({100*stats['validation_records']/total_count:.1f}%)")
-    print(f"Test: {stats['test_records']:,} ({100*stats['test_records']/total_count:.1f}%)")
+    print(
+        f"Train: {stats['train_records']:,} ({100 * stats['train_records'] / total_count:.1f}%)"
+    )
+    print(
+        f"Validation: {stats['validation_records']:,} ({100 * stats['validation_records'] / total_count:.1f}%)"
+    )
+    print(
+        f"Test: {stats['test_records']:,} ({100 * stats['test_records'] / total_count:.1f}%)"
+    )
 
     # Save splits
     train_df.to_parquet(train_data.path, index=False)

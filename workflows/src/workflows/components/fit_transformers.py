@@ -1,9 +1,9 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
-# Licensed under the Apache License, Version 2.0
+# Copyright (c) 2025, Amazon Web Services, Inc.
+# Code modified by vshardul@amazon.com based on Apache License, Version 2.0 code provided by NVIDIA Corporation.
 """Component: Fit feature transformers on training data."""
 
 from kfp import dsl
-from kfp.dsl import Dataset, Input, Output, Artifact
+from kfp.dsl import Artifact, Dataset, Input, Output
 
 
 @dsl.component(
@@ -38,13 +38,14 @@ def fit_transformers(
     Returns:
         Dict with transformer configuration
     """
-    import pandas as pd
     import pickle
+
+    import pandas as pd
     from category_encoders import BinaryEncoder
     from sklearn.compose import ColumnTransformer
+    from sklearn.impute import SimpleImputer
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import OneHotEncoder, RobustScaler
-    from sklearn.impute import SimpleImputer
 
     # Column definitions
     COL_AMOUNT = "Amount"
@@ -61,10 +62,20 @@ def fit_transformers(
     MERCHANT_AND_USER_COLS = [COL_MERCHANT, COL_CARD, COL_MCC]
 
     numerical_predictors = [COL_AMOUNT]
-    nominal_predictors = [COL_ERROR, COL_CARD, COL_CHIP, COL_CITY, COL_ZIP, COL_MCC, COL_MERCHANT]
+    nominal_predictors = [
+        COL_ERROR,
+        COL_CARD,
+        COL_CHIP,
+        COL_CITY,
+        COL_ZIP,
+        COL_MCC,
+        COL_MERCHANT,
+    ]
 
     # Remove already-encoded columns
-    nominal_predictors = [c for c in nominal_predictors if c not in MERCHANT_AND_USER_COLS]
+    nominal_predictors = [
+        c for c in nominal_predictors if c not in MERCHANT_AND_USER_COLS
+    ]
     predictor_columns = numerical_predictors + nominal_predictors
 
     # Load training data
@@ -89,19 +100,25 @@ def fit_transformers(
             print(f"  {col}: {n_unique} unique -> binary")
 
     # Mark categorical columns
-    pdf_training[nominal_predictors] = pdf_training[nominal_predictors].astype("category")
+    pdf_training[nominal_predictors] = pdf_training[nominal_predictors].astype(
+        "category"
+    )
 
     # Build transformer pipelines
-    bin_encoder = Pipeline(steps=[
-        ("binary", BinaryEncoder(handle_missing="value", handle_unknown="value"))
-    ])
-    one_hot_encoder = Pipeline(steps=[
-        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
-    ])
-    robust_scaler = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="median")),
-        ("robust", RobustScaler()),
-    ])
+    bin_encoder = Pipeline(
+        steps=[
+            ("binary", BinaryEncoder(handle_missing="value", handle_unknown="value"))
+        ]
+    )
+    one_hot_encoder = Pipeline(
+        steps=[("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))]
+    )
+    robust_scaler = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("robust", RobustScaler()),
+        ]
+    )
 
     # Compose transformer
     transformers = []
@@ -139,14 +156,17 @@ def fit_transformers(
 
     # Save transformer
     with open(feature_transformer_artifact.path, "wb") as f:
-        pickle.dump({
-            "transformer": transformer,
-            "output_columns": output_columns,
-            "type_mapping": type_mapping,
-            "predictor_columns": predictor_columns,
-            "nominal_predictors": nominal_predictors,
-            "numerical_predictors": numerical_predictors,
-        }, f)
+        pickle.dump(
+            {
+                "transformer": transformer,
+                "output_columns": output_columns,
+                "type_mapping": type_mapping,
+                "predictor_columns": predictor_columns,
+                "nominal_predictors": nominal_predictors,
+                "numerical_predictors": numerical_predictors,
+            },
+            f,
+        )
 
     return {
         "num_output_columns": len(output_columns),

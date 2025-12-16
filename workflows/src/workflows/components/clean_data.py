@@ -1,9 +1,9 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
-# Licensed under the Apache License, Version 2.0
+# Copyright (c) 2025, Amazon Web Services, Inc.
+# Code modified by vshardul@amazon.com based on Apache License, Version 2.0 code provided by NVIDIA Corporation.
 """Component: Clean and encode TabFormer data."""
 
 from kfp import dsl
-from kfp.dsl import Dataset, Input, Output, Metrics, Artifact
+from kfp.dsl import Artifact, Dataset, Input, Metrics, Output
 
 
 @dsl.component(
@@ -48,9 +48,10 @@ def clean_and_encode_data(
     Returns:
         Dict with cleaning statistics and transformer column info
     """
-    import pandas as pd
-    import numpy as np
     import pickle
+
+    import numpy as np
+    import pandas as pd
     from category_encoders import BinaryEncoder
     from sklearn.compose import ColumnTransformer
     from sklearn.pipeline import Pipeline
@@ -133,19 +134,25 @@ def clean_and_encode_data(
     nr_elements = max(nr_unique_merchant, nr_unique_card)
 
     # Create fitting dataframe with all unique values
-    data_ids = pd.DataFrame({
-        COL_CARD: [data[COL_CARD].iloc[0]] * nr_elements,
-        COL_MERCHANT: [data[COL_MERCHANT].iloc[0]] * nr_elements,
-        COL_MCC: [data[COL_MCC].iloc[0]] * nr_elements,
-    })
+    data_ids = pd.DataFrame(
+        {
+            COL_CARD: [data[COL_CARD].iloc[0]] * nr_elements,
+            COL_MERCHANT: [data[COL_MERCHANT].iloc[0]] * nr_elements,
+            COL_MCC: [data[COL_MCC].iloc[0]] * nr_elements,
+        }
+    )
     data_ids.loc[np.arange(nr_unique_card), COL_CARD] = data[COL_CARD].unique()
-    data_ids.loc[np.arange(nr_unique_merchant), COL_MERCHANT] = data[COL_MERCHANT].unique()
+    data_ids.loc[np.arange(nr_unique_merchant), COL_MERCHANT] = data[
+        COL_MERCHANT
+    ].unique()
     data_ids.loc[np.arange(nr_unique_mcc), COL_MCC] = data[COL_MCC].unique()
     data_ids = data_ids[MERCHANT_AND_USER_COLS].astype("category")
 
-    id_bin_encoder = Pipeline(steps=[
-        ("binary", BinaryEncoder(handle_missing="value", handle_unknown="value"))
-    ])
+    id_bin_encoder = Pipeline(
+        steps=[
+            ("binary", BinaryEncoder(handle_missing="value", handle_unknown="value"))
+        ]
+    )
     id_transformer = ColumnTransformer(
         transformers=[("binary", id_bin_encoder, MERCHANT_AND_USER_COLS)],
         remainder="passthrough",
@@ -165,12 +172,24 @@ def clean_and_encode_data(
     ]
 
     preprocessed_id_df = pd.DataFrame(preprocessed_id_data, columns=id_columns)
-    data = pd.concat([data.reset_index(drop=True), preprocessed_id_df.reset_index(drop=True)], axis=1)
+    data = pd.concat(
+        [data.reset_index(drop=True), preprocessed_id_df.reset_index(drop=True)], axis=1
+    )
 
     # Remove duplicate non-fraud transactions
-    nominal_predictors = [COL_ERROR, COL_CARD, COL_CHIP, COL_CITY, COL_ZIP, COL_MCC, COL_MERCHANT]
+    nominal_predictors = [
+        COL_ERROR,
+        COL_CARD,
+        COL_CHIP,
+        COL_CITY,
+        COL_ZIP,
+        COL_MCC,
+        COL_MERCHANT,
+    ]
     fraud_data = data[data[COL_FRAUD] == 1]
-    non_fraud_data = data[data[COL_FRAUD] == 0].drop_duplicates(subset=nominal_predictors)
+    non_fraud_data = data[data[COL_FRAUD] == 0].drop_duplicates(
+        subset=nominal_predictors
+    )
     data = pd.concat([non_fraud_data, fraud_data])
 
     after_dedup_count = len(data)
@@ -189,17 +208,22 @@ def clean_and_encode_data(
     # Shuffle
     data = data.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    print(f"Final dataset: {final_count:,} records, {fraud_count:,} fraud ({100*fraud_count/final_count:.2f}%)")
+    print(
+        f"Final dataset: {final_count:,} records, {fraud_count:,} fraud ({100 * fraud_count / final_count:.2f}%)"
+    )
 
     # Save outputs
     data.to_parquet(cleaned_data.path, index=False)
 
     with open(id_transformer_artifact.path, "wb") as f:
-        pickle.dump({
-            "transformer": id_transformer,
-            "columns": id_columns,
-            "merchant_user_cols": MERCHANT_AND_USER_COLS,
-        }, f)
+        pickle.dump(
+            {
+                "transformer": id_transformer,
+                "columns": id_columns,
+                "merchant_user_cols": MERCHANT_AND_USER_COLS,
+            },
+            f,
+        )
 
     # Log metrics
     metrics.log_metric("original_records", original_count)

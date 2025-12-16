@@ -1,5 +1,5 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
-# Licensed under the Apache License, Version 2.0
+# Copyright (c) 2025, Amazon Web Services, Inc.
+# Code modified by vshardul@amazon.com based on Apache License, Version 2.0 code provided by NVIDIA Corporation.
 """Column name constants and markers for TabFormer preprocessing."""
 
 # Original column names (renamed for cleaner access)
@@ -52,5 +52,5 @@ FRAUD_TO_BINARY = {"No": 0, "Yes": 1}
 
 # Default split years
 TRAIN_YEAR_CUTOFF = 2018  # < 2018 for training
-VALIDATION_YEAR = 2018     # == 2018 for validation
+VALIDATION_YEAR = 2018  # == 2018 for validation
 # > 2018 for test

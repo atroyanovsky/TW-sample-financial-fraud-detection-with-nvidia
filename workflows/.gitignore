@@ -1,0 +1,10 @@
+# Compiled pipeline artifacts
+*.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# uv
+.python-version

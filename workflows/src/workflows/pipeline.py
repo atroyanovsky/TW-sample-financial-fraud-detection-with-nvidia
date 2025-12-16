@@ -1,26 +1,26 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
-# Licensed under the Apache License, Version 2.0
+# Copyright (c) 2025, Amazon Web Services, Inc.
+# Code modified by vshardul@amazon.com based on Apache License, Version 2.0 code provided by NVIDIA Corporation.
 """Kubeflow Pipeline definition for TabFormer fraud detection preprocessing."""
 
-from kfp import dsl
-from kfp import compiler
+from kfp import compiler, dsl, kubernetes
 
-from components.load_data import load_raw_data
-from components.clean_data import clean_and_encode_data
-from components.split_data import split_by_year
-from components.fit_transformers import fit_transformers
-from components.prepare_xgb import prepare_xgb_datasets
-from components.prepare_gnn import prepare_gnn_datasets
+from .components.clean_data import clean_and_encode_data
+from .components.fit_transformers import fit_transformers
+from .components.load_data import load_raw_data
+from .components.prepare_gnn import prepare_gnn_datasets
+from .components.prepare_xgb import prepare_xgb_datasets
+from .components.split_data import split_by_year
+
+# ConfigMap name containing data paths
+DATA_CONFIG_MAP = "fraud-detection-config"
 
 
 @dsl.pipeline(
     name="tabformer-preprocessing-pipeline",
     description="End-to-end data preprocessing for TabFormer fraud detection: "
-                "load -> clean -> split -> transform -> prepare XGB/GNN datasets",
+    "load -> clean -> split -> transform -> prepare XGB/GNN datasets",
 )
 def tabformer_preprocessing_pipeline(
-    source_path: str = "data/TabFormer/raw/card_transaction.v1.csv",
-    s3_bucket: str = "",
     s3_region: str = "us-east-1",
     under_sample: bool = True,
     fraud_ratio: float = 0.1,
@@ -31,16 +31,18 @@ def tabformer_preprocessing_pipeline(
     """TabFormer preprocessing pipeline.
 
     Orchestrates the full preprocessing workflow:
-    1. Load raw CSV data (from S3 or local)
+    1. Load raw CSV data from S3 (path from ConfigMap)
     2. Clean and encode identifiers
     3. Split by year into train/validation/test
     4. Fit feature transformers on training data
     5. Prepare XGBoost-ready datasets
     6. Prepare GNN graph structures
 
+    Data paths are loaded from ConfigMap 'fraud-detection-config':
+        - source_path: S3 key for raw CSV
+        - s3_bucket: S3 bucket name
+
     Args:
-        source_path: Path to raw CSV (S3 key if bucket provided, else local)
-        s3_bucket: Optional S3 bucket name for remote data
         s3_region: AWS region for S3
         under_sample: Whether to undersample majority class
         fraud_ratio: Target fraud ratio when undersampling
@@ -48,11 +50,18 @@ def tabformer_preprocessing_pipeline(
         validation_year: Year for validation data
         one_hot_threshold: Max categories for one-hot (else binary)
     """
-    # Step 1: Load raw data
+
+    # Step 1: Load raw data (paths injected from ConfigMap)
     load_task = load_raw_data(
-        source_path=source_path,
-        s3_bucket=s3_bucket,
         s3_region=s3_region,
+    )
+    kubernetes.use_config_map_as_env(
+        load_task,
+        config_map_name=DATA_CONFIG_MAP,
+        config_map_key_to_env={
+            "source_path": "SOURCE_PATH",
+            "s3_bucket": "S3_BUCKET",
+        },
     )
 
     # Step 2: Clean and encode
@@ -76,7 +85,7 @@ def tabformer_preprocessing_pipeline(
     )
 
     # Step 5: Prepare XGBoost datasets (parallel with GNN)
-    xgb_task = prepare_xgb_datasets(
+    prepare_xgb_datasets(
         train_data=split_task.outputs["train_data"],
         validation_data=split_task.outputs["validation_data"],
         test_data=split_task.outputs["test_data"],
@@ -85,7 +94,7 @@ def tabformer_preprocessing_pipeline(
     )
 
     # Step 6: Prepare GNN datasets (parallel with XGB)
-    gnn_task = prepare_gnn_datasets(
+    prepare_gnn_datasets(
         train_data=split_task.outputs["train_data"],
         validation_data=split_task.outputs["validation_data"],
         test_data=split_task.outputs["test_data"],
