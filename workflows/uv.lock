@@ -856,23 +856,26 @@ source = { editable = "." }
 dependencies = [
     { name = "kfp" },
     { name = "kfp-kubernetes" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "docker" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "scikit-learn" },
 ]
 
-[package.optional-dependencies]
-dev = [
-    { name = "docker" },
-]
-
 [package.metadata]
 requires-dist = [
-    { name = "docker", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "kfp", specifier = ">=2.5.0" },
     { name = "kfp-kubernetes", specifier = ">=1.4.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "docker", specifier = ">=7.0.0" },
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "pyarrow", specifier = ">=22.0.0" },
     { name = "scikit-learn", specifier = ">=1.8.0" },
 ]
-provides-extras = ["dev"]

@@ -7,14 +7,14 @@ requires-python = ">=3.12"
 dependencies = [
     "kfp>=2.5.0",
     "kfp-kubernetes>=1.4.0",
-    "pandas>=2.3.3",
-    "pyarrow>=22.0.0",
-    "scikit-learn>=1.8.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "docker>=7.0.0",
+    "pandas>=2.3.3",
+    "pyarrow>=22.0.0",
+    "scikit-learn>=1.8.0"
 ]
 
 [build-system]
