@@ -1,0 +1,14 @@
+[project]
+name = "workflows"
+version = "0.1.0"
+description = "Pipeline workflows for Sample Financial Fraud Detection with Nvidia for Kubeflow"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "kfp"
+]
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

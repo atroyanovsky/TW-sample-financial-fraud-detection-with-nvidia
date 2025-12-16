@@ -3,8 +3,10 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as eks from 'aws-cdk-lib/aws-eks';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as blueprints from '@aws-quickstart/eks-blueprints'
-import { NagSuppressions } from 'cdk-nag';
 import { Construct } from 'constructs';
+import * as s3 from "aws-cdk-lib/aws-s3";
+import {CfnJson} from "aws-cdk-lib";
+import {KfAddon} from "./kf-addon";
 
 export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
   /**
@@ -12,6 +14,7 @@ export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
    */
   modelBucketName: string;
 
+  kubeflowBucketName: string;
 }
 
 export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
@@ -29,6 +32,15 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
           destination: ec2.FlowLogDestination.toCloudWatchLogs(),
         }
       }
+    });
+
+    const kubeflowBucket = new s3.Bucket(this, 'KubeflowPipelinesBucket', {
+      bucketName: props.kubeflowBucketName,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      serverAccessLogsPrefix: 'access-logs/',
+      enforceSSL: true,
+      encryption: s3.BucketEncryption.S3_MANAGED
     });
 
     const g4dnNodePoolSpec: blueprints.NodePoolV1Spec = {
@@ -100,12 +112,15 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
 
     const repoUrl = "https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia";
 
+    Reflect.defineMetadata("ordered", true, blueprints.addons.ArgoCDAddOn)
+
     const addons = [
       new blueprints.addons.AwsLoadBalancerControllerAddOn(),
       new blueprints.addons.GpuOperatorAddon({
         version: "v25.3.2"
       }),
       new blueprints.addons.SecretsStoreAddOn(),
+      new blueprints.addons.CertManagerAddOn(),
       new blueprints.addons.ArgoCDAddOn({
         bootstrapRepo: {
           repoUrl: repoUrl,
@@ -122,15 +137,17 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
           account: this.account,
           region: this.region,
           bucketName: props.modelBucketName
-        }
+        },
+        values: argoCdValues
       }),
+      new KfAddon({bucketName: props.kubeflowBucketName})
     ];
 
     // Use EKS with Karpenter instead of Automode for GPU driver flexibility
     const cluster = blueprints.EksBlueprint.builder()
       .account(this.account)
       .region(this.region)
-      .version(eks.KubernetesVersion.V1_32)
+      .version(eks.KubernetesVersion.V1_33)
       .addOns(
         new blueprints.addons.KarpenterV1AddOn({
           nodePoolSpec: g4dnNodePoolSpec,
@@ -147,7 +164,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
             securityGroupSelectorTerms: [
               {
                 tags: {
-                  "aws:eks:cluster-name": "ClusterBlueprint"
+                  "aws:eks:cluster-name": "nvidia-fraud-detection-cluster-blueprint"
                 }
               }
             ],
@@ -166,84 +183,6 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       )
       .teams(triton)
       .resourceProvider(blueprints.GlobalResources.Vpc, new blueprints.DirectVpcProvider(vpc))
-      .build(this, "ClusterBlueprint");
-
-    // Add CDK Nag suppressions for legitimate AWS managed policies
-    NagSuppressions.addResourceSuppressions(
-      cluster,
-      [
-        {
-          id: 'AwsSolutions-IAM4',
-          reason: 'AWS managed policies are required for EKS cluster and node group functionality',
-          appliesTo: [
-            'Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonEKSClusterPolicy',
-            'Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonEKSComputePolicy',
-            'Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonEKSBlockStoragePolicy',
-            'Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonEKSLoadBalancingPolicy',
-            'Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonEKSNetworkingPolicy',
-            'Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonEKSWorkerNodePolicy',
-            'Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly',
-            'Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly',
-            'Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
-            'Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
-          ]
-        },
-        {
-          id: 'AwsSolutions-EKS1',
-          reason: 'Public API access is required for CI/CD and external access patterns'
-        },
-        {
-          id: 'AwsSolutions-EKS2',
-          reason: 'Control plane logging is enabled through EKS blueprints configuration',
-          appliesTo: [
-            'LogExport::api',
-            'LogExport::audit',
-            'LogExport::authenticator',
-            'LogExport::controllerManager',
-            'LogExport::scheduler'
-          ]
-        },
-        {
-          id: 'AwsSolutions-IAM5',
-          reason: 'Wildcard permissions are required for kubectl provider functionality'
-        },
-        {
-          id: 'AwsSolutions-L1',
-          reason: 'Lambda runtime is managed by EKS blueprints'
-        },
-        {
-          id: 'AwsSolutions-KMS5',
-          reason: 'KMS key rotation is managed by EKS service'
-        }
-      ],
-      true
-    );
-
-    // Additional suppression for KubectlProvider ECR Public access
-    // NagSuppressions.addResourceSuppressionsByPath(
-    //   this,
-    //   '/NvidiaFraudDetectionBlueprint/ClusterBlueprint/ClusterBlueprint/KubectlProvider/Handler/ServiceRole/Resource',
-    //   [
-    //     {
-    //       id: 'AwsSolutions-IAM4',
-    //       reason: 'ECR Public ReadOnly policy required for kubectl provider to access public container images',
-    //       appliesTo: [
-    //         'Policy::arn:<AWS::Partition>:iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly',
-    //         'Policy::{\"Fn::If\":[\"ClusterBlueprintKubectlProviderHandlerHasEcrPublicFD2FFDE5\",{\"Fn::Join\":[\"\",[\"arn:\",{\"Ref\":\"AWS::Partition\"},\":iam::aws:policy/AmazonElasticContainerRegistryPublicReadOnly\"]]},{\"Ref\":\"AWS::NoValue\"}]}'
-    //       ]
-    //     }
-    //   ]
-    // );
-
-    // Suppress VPC flow log warning
-    NagSuppressions.addResourceSuppressions(
-      vpc,
-      [{
-        id: 'AwsSolutions-VPC7',
-        reason: 'VPC Flow Logs are enabled via flowLogs configuration'
-      }],
-      true
-    );
-
+      .build(this, "nvidia-fraud-detection-cluster-blueprint");
   }
 }
