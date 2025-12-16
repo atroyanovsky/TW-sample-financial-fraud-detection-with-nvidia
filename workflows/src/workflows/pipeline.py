@@ -10,6 +10,7 @@ from .components.load_data import load_raw_data
 from .components.prepare_gnn import prepare_gnn_datasets
 from .components.prepare_xgb import prepare_xgb_datasets
 from .components.split_data import split_by_year
+from .components.visualize import visualize_data_stats, visualize_graph_structure
 
 # ConfigMap name containing data paths
 DATA_CONFIG_MAP = "fraud-detection-config"
@@ -18,7 +19,7 @@ DATA_CONFIG_MAP = "fraud-detection-config"
 @dsl.pipeline(
     name="tabformer-preprocessing-pipeline",
     description="End-to-end data preprocessing for TabFormer fraud detection: "
-    "load -> clean -> split -> transform -> prepare XGB/GNN datasets",
+    "load -> clean -> split -> transform -> prepare XGB/GNN datasets -> visualize",
 )
 def cc_data_preprocessing_pipeline(
     s3_region: str = "us-east-1",
@@ -37,6 +38,7 @@ def cc_data_preprocessing_pipeline(
     4. Fit feature transformers on training data
     5. Prepare XGBoost-ready datasets
     6. Prepare GNN graph structures
+    7. Generate visualizations for KFP UI
 
     Data paths are loaded from ConfigMap 'fraud-detection-config':
         - source_path: S3 key for raw CSV
@@ -50,7 +52,6 @@ def cc_data_preprocessing_pipeline(
         validation_year: Year for validation data
         one_hot_threshold: Max categories for one-hot (else binary)
     """
-
     # Step 1: Load raw data (paths injected from ConfigMap)
     load_task = load_raw_data(
         s3_region=s3_region,
@@ -85,7 +86,7 @@ def cc_data_preprocessing_pipeline(
     )
 
     # Step 5: Prepare XGBoost datasets (parallel with GNN)
-    prepare_xgb_datasets(
+    xgb_task = prepare_xgb_datasets(
         train_data=split_task.outputs["train_data"],
         validation_data=split_task.outputs["validation_data"],
         test_data=split_task.outputs["test_data"],
@@ -94,12 +95,23 @@ def cc_data_preprocessing_pipeline(
     )
 
     # Step 6: Prepare GNN datasets (parallel with XGB)
-    prepare_gnn_datasets(
+    gnn_task = prepare_gnn_datasets(
         train_data=split_task.outputs["train_data"],
         validation_data=split_task.outputs["validation_data"],
         test_data=split_task.outputs["test_data"],
         feature_transformer_artifact=fit_task.outputs["feature_transformer_artifact"],
         id_transformer_artifact=clean_task.outputs["id_transformer_artifact"],
+    )
+
+    # Step 7: Generate visualizations for KFP UI
+    # Data statistics visualization (runs after clean)
+    visualize_data_stats(
+        cleaned_data=clean_task.outputs["cleaned_data"],
+    )
+
+    # Graph structure visualization (runs after GNN prep, uses edge data)
+    visualize_graph_structure(
+        gnn_train_data=gnn_task.outputs["gnn_train_edges"],
     )
 
 
