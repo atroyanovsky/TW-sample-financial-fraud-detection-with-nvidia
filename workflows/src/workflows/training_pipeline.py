@@ -10,6 +10,7 @@ from .components.train_model import (
     train_fraud_model,
     upload_model_to_s3,
 )
+from .components.test_model import smoke_test_triton
 
 # ConfigMap name containing S3 configuration
 MODEL_CONFIG_MAP = "fraud-detection-config"
@@ -40,6 +41,11 @@ def fraud_detection_training_pipeline(
     # S3 configuration
     s3_model_prefix: str = "model-repository",
     s3_region: str = "us-east-1",
+    # Validation configuration
+    run_smoke_test: bool = True,
+    triton_service_name: str = "triton-inference-server",
+    triton_namespace: str = "triton",
+    triton_port: int = 8005,
 ):
     """Train fraud detection model and upload to S3.
 
@@ -47,6 +53,7 @@ def fraud_detection_training_pipeline(
     1. Prepares training configuration with hyperparameters
     2. Trains a GNN+XGBoost model using NVIDIA's training container
     3. Uploads the trained model to S3 for Triton deployment
+    4. Optionally runs smoke test to verify Triton picks up new model
 
     S3 bucket for model storage is loaded from ConfigMap 'fraud-detection-config':
         - model_bucket: S3 bucket for model storage
@@ -59,6 +66,10 @@ def fraud_detection_training_pipeline(
         xgb_*: XGBoost hyperparameters
         s3_model_prefix: S3 key prefix for model storage
         s3_region: AWS region for S3
+        run_smoke_test: Whether to run smoke test after upload
+        triton_service_name: Triton k8s service name
+        triton_namespace: Namespace where Triton is deployed
+        triton_port: Triton HTTP port
     """
     # Step 1: Prepare training configuration
     config_task = prepare_training_config(
@@ -114,6 +125,21 @@ def fraud_detection_training_pipeline(
             "model_bucket": "MODEL_BUCKET",
         },
     )
+
+    # Step 4: Optional smoke test to verify Triton picks up new model
+    # Triton polls S3 every 10 seconds, so we wait a bit longer
+    with dsl.If(run_smoke_test == True):  # noqa: E712
+        triton_host = f"{triton_service_name}.{triton_namespace}.svc.cluster.local"
+
+        smoke_task = smoke_test_triton(
+            triton_host=triton_host,
+            triton_port=triton_port,
+            model_name="prediction_and_shapley",
+            timeout_seconds=120,  # Wait up to 2min for Triton to reload model
+        )
+
+        # Ensure smoke test runs after upload completes
+        smoke_task.after(upload_task)
 
 
 if __name__ == "__main__":
