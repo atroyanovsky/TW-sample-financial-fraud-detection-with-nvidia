@@ -1,4 +1,4 @@
-const argoCdValues = {
+export const argoCdValues = {
   global: {
     securityContext: {
       fsGroup: 999

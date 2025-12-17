@@ -9,15 +9,13 @@ import { BlueprintECRStack } from "../lib/training-image-repo";
 
 const app = new cdk.App();
 
-// Add CDK Nag checks
-//cdk.Aspects.of(app).add(new AwsSolutionsChecks({ verbose: true }));
-
 const env = {
   account: process.env.CDK_DEFAULT_ACCOUNT,
   region: process.env.CDK_DEFAULT_REGION,
 };
 
 const modelBucketName = "ml-on-containers-" + process.env.CDK_DEFAULT_ACCOUNT;
+const kfBucketName = "kubeflow-pipelines" + process.env.CDK_DEFAULT_ACCOUNT;
 
 const tarExtractorStack = new TarExtractorStack(
   app,
@@ -61,6 +59,7 @@ const mainStack = new NvidiaFraudDetectionBlueprint(
   {
     env: env,
     modelBucketName: modelBucketName + "-model-registry",
+    kubeflowBucketName: kfBucketName
   },
 );
 

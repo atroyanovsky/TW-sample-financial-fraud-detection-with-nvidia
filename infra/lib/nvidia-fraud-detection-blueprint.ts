@@ -5,8 +5,8 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as blueprints from '@aws-quickstart/eks-blueprints'
 import { Construct } from 'constructs';
 import * as s3 from "aws-cdk-lib/aws-s3";
-import {CfnJson} from "aws-cdk-lib";
-import {KfAddon} from "./kf-addon";
+import { KfAddon } from "./kf-addon";
+import { argoCdValues } from './argocd-values';
 
 export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
   /**
@@ -124,7 +124,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       new blueprints.addons.ArgoCDAddOn({
         bootstrapRepo: {
           repoUrl: repoUrl,
-          targetRevision: 'main',
+          targetRevision: 'v2',
           path: 'infra/manifests/argocd',
         },
         bootstrapValues: {
@@ -133,14 +133,14 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
           serviceAccount: {
             name: "triton-sa"
           },
-          targetRevision: "main",
+          targetRevision: "v2",
           account: this.account,
           region: this.region,
           bucketName: props.modelBucketName
         },
         values: argoCdValues
       }),
-      new KfAddon({bucketName: props.kubeflowBucketName})
+      new KfAddon({ bucketName: props.kubeflowBucketName })
     ];
 
     // Use EKS with Karpenter instead of Automode for GPU driver flexibility
@@ -183,6 +183,10 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       )
       .teams(triton)
       .resourceProvider(blueprints.GlobalResources.Vpc, new blueprints.DirectVpcProvider(vpc))
+      .clusterProvider(new blueprints.MngClusterProvider({
+        amiType: eks.NodegroupAmiType.AL2023_X86_64_STANDARD,
+        instanceTypes: [ec2.InstanceType.of(ec2.InstanceClass.M5, ec2.InstanceSize.XLARGE)]
+      }))
       .build(this, "nvidia-fraud-detection-cluster-blueprint");
   }
 }

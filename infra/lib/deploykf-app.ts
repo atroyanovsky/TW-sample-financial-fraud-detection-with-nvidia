@@ -1,4 +1,4 @@
-const deployKfApp = (bucket: string, region: string, roleArn: string) => {
+export const deployKfApp = (bucket: string, region: string, roleArn: string) => {
   return {
     apiVersion: "argoproj.io/v1alpha1",
     kind: "Application",
