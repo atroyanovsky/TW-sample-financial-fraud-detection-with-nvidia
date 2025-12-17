@@ -141,19 +141,6 @@ kubeflow_tools:
   ##               pipelines
   ## --------------------------------------
   pipelines:
-    {} # <-- REMOVE THIS, IF YOU INCLUDE VALUES UNDER THIS SECTION!
-kubeflow_dependencies:
-  kubeflow_argo_workflows:
-    controller:
-      serviceAccount:
-        annotations:
-          eks.amazonaws.com/role-arn: ${roleArn} 
-    server:
-      serviceAccount:
-        annotations:
-          eks.amazonaws.com/role-arn: ${roleArn} 
-kubeflow_tools:
-  pipelines:
     serviceAccounts:
       apiServer:
         annotations:
@@ -171,7 +158,17 @@ kubeflow_tools:
       host: "s3.${region}.amazonaws.com"
       useSSL: true
       auth:
-        fromEnv: true`
+        fromEnv: true
+kubeflow_dependencies:
+  kubeflow_argo_workflows:
+    controller:
+      serviceAccount:
+        annotations:
+          eks.amazonaws.com/role-arn: ${roleArn} 
+    server:
+      serviceAccount:
+        annotations:
+          eks.amazonaws.com/role-arn: ${roleArn}`
             }
           ]
         }
@@ -179,6 +176,12 @@ kubeflow_tools:
       destination: {
         server: "https://kubernetes.default.svc",
         namespace: "argocd"
+      },
+      syncPolicy: {
+        automated: {
+          prune: true,
+          selfHeal: true
+        }
       }
     }
   }
