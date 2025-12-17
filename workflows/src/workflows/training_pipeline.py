@@ -7,19 +7,27 @@ from kfp import kubernetes
 
 from .components.train_model import (
     prepare_training_config,
-    train_fraud_model,
-    upload_model_to_s3,
+    download_gnn_data_to_pvc,
+    copy_config_to_pvc,
+    run_nvidia_training,
+    upload_model_from_pvc,
 )
 from .components.test_model import smoke_test_triton
 
 # ConfigMap name containing S3 configuration
 MODEL_CONFIG_MAP = "fraud-detection-config"
 
+# PVC configuration
+DATA_PVC_SIZE = "50Gi"  # GNN data can be large
+OUTPUT_PVC_SIZE = "10Gi"  # Model output is smaller
+CONFIG_PVC_SIZE = "1Gi"  # Config is tiny
+STORAGE_CLASS = "gp3"  # AWS EBS gp3, adjust for your cluster
+
 
 @dsl.pipeline(
     name="fraud-detection-training-pipeline",
     description="Train GNN+XGBoost fraud detection model using NVIDIA container "
-    "and upload to S3 for Triton deployment",
+    "and upload to S3 for Triton deployment. Uses PVCs for data transfer.",
 )
 def fraud_detection_training_pipeline(
     # Data location (S3 URI to GNN preprocessed data)
@@ -50,15 +58,18 @@ def fraud_detection_training_pipeline(
     """Train fraud detection model and upload to S3.
 
     This pipeline:
-    1. Prepares training configuration with hyperparameters
-    2. Trains a GNN+XGBoost model using NVIDIA's training container
-    3. Uploads the trained model to S3 for Triton deployment
-    4. Optionally runs smoke test to verify Triton picks up new model
+    1. Creates PVCs for data transfer between components
+    2. Downloads GNN data from S3 to data PVC
+    3. Prepares training config and copies to config PVC
+    4. Runs NVIDIA training container with PVCs mounted
+    5. Uploads trained model from output PVC to S3
+    6. Cleans up PVCs
+    7. Optionally runs smoke test to verify Triton picks up new model
 
     S3 bucket for model storage is loaded from ConfigMap 'fraud-detection-config':
         - model_bucket: S3 bucket for model storage
 
-    The pipeline requires GPU nodes (g4dn) for training.
+    The pipeline requires GPU nodes (g4dn/p3/etc) for training.
 
     Args:
         gnn_data_s3_uri: S3 URI to preprocessed GNN data from preprocessing pipeline
@@ -71,7 +82,38 @@ def fraud_detection_training_pipeline(
         triton_namespace: Namespace where Triton is deployed
         triton_port: Triton HTTP port
     """
-    # Step 1: Prepare training configuration
+    # =========================================================================
+    # Step 1: Create PVCs for data transfer
+    # =========================================================================
+
+    # PVC for GNN input data
+    data_pvc = kubernetes.CreatePVC(
+        pvc_name_suffix="-gnn-data",
+        access_modes=["ReadWriteOnce"],
+        size=DATA_PVC_SIZE,
+        storage_class_name=STORAGE_CLASS,
+    )
+
+    # PVC for trained model output
+    output_pvc = kubernetes.CreatePVC(
+        pvc_name_suffix="-model-output",
+        access_modes=["ReadWriteOnce"],
+        size=OUTPUT_PVC_SIZE,
+        storage_class_name=STORAGE_CLASS,
+    )
+
+    # PVC for config file
+    config_pvc = kubernetes.CreatePVC(
+        pvc_name_suffix="-training-config",
+        access_modes=["ReadWriteOnce"],
+        size=CONFIG_PVC_SIZE,
+        storage_class_name=STORAGE_CLASS,
+    )
+
+    # =========================================================================
+    # Step 2: Prepare training config
+    # =========================================================================
+
     config_task = prepare_training_config(
         gnn_hidden_channels=gnn_hidden_channels,
         gnn_n_hops=gnn_n_hops,
@@ -87,10 +129,69 @@ def fraud_detection_training_pipeline(
         xgb_gamma=xgb_gamma,
     )
 
-    # Step 2: Train model using NVIDIA container
-    train_task = train_fraud_model(
-        gnn_data_uri=gnn_data_s3_uri,
+    # =========================================================================
+    # Step 3: Download GNN data to PVC
+    # =========================================================================
+
+    download_task = download_gnn_data_to_pvc(
+        gnn_data_s3_uri=gnn_data_s3_uri,
+        s3_region=s3_region,
+        mount_path="/data",
+    )
+    download_task.after(data_pvc)
+
+    # Mount data PVC
+    kubernetes.mount_pvc(
+        download_task,
+        pvc_name=data_pvc.outputs["name"],
+        mount_path="/data",
+    )
+
+    # =========================================================================
+    # Step 4: Copy config to PVC
+    # =========================================================================
+
+    copy_config_task = copy_config_to_pvc(
         training_config=config_task.outputs["config_artifact"],
+        config_mount_path="/config",
+    )
+    copy_config_task.after(config_pvc)
+
+    # Mount config PVC
+    kubernetes.mount_pvc(
+        copy_config_task,
+        pvc_name=config_pvc.outputs["name"],
+        mount_path="/config",
+    )
+
+    # =========================================================================
+    # Step 5: Run NVIDIA training container
+    # =========================================================================
+
+    train_task = run_nvidia_training(
+        data_mount_path="/data",
+        output_mount_path="/trained_models",
+        config_mount_path="/config",
+    )
+    train_task.after(download_task)
+    train_task.after(copy_config_task)
+    train_task.after(output_pvc)
+
+    # Mount all three PVCs
+    kubernetes.mount_pvc(
+        train_task,
+        pvc_name=data_pvc.outputs["name"],
+        mount_path="/data",
+    )
+    kubernetes.mount_pvc(
+        train_task,
+        pvc_name=output_pvc.outputs["name"],
+        mount_path="/trained_models",
+    )
+    kubernetes.mount_pvc(
+        train_task,
+        pvc_name=config_pvc.outputs["name"],
+        mount_path="/config",
     )
 
     # Configure GPU node selector and tolerations for training
@@ -110,11 +211,22 @@ def fraud_detection_training_pipeline(
     train_task.set_accelerator_type("nvidia.com/gpu")
     train_task.set_accelerator_limit(1)
 
-    # Step 3: Upload model to S3
-    upload_task = upload_model_to_s3(
-        trained_model=train_task.outputs["trained_model"],
+    # =========================================================================
+    # Step 6: Upload model to S3
+    # =========================================================================
+
+    upload_task = upload_model_from_pvc(
         s3_prefix=s3_model_prefix,
         s3_region=s3_region,
+        output_mount_path="/trained_models",
+    )
+    upload_task.after(train_task)
+
+    # Mount output PVC to read trained model
+    kubernetes.mount_pvc(
+        upload_task,
+        pvc_name=output_pvc.outputs["name"],
+        mount_path="/trained_models",
     )
 
     # Inject S3 bucket from ConfigMap
@@ -126,8 +238,26 @@ def fraud_detection_training_pipeline(
         },
     )
 
-    # Step 4: Optional smoke test to verify Triton picks up new model
-    # Triton polls S3 every 10 seconds, so we wait a bit longer
+    # =========================================================================
+    # Step 7: Cleanup PVCs
+    # =========================================================================
+
+    delete_data_pvc = kubernetes.DeletePVC(
+        pvc_name=data_pvc.outputs["name"]
+    ).after(upload_task)
+
+    delete_output_pvc = kubernetes.DeletePVC(
+        pvc_name=output_pvc.outputs["name"]
+    ).after(upload_task)
+
+    delete_config_pvc = kubernetes.DeletePVC(
+        pvc_name=config_pvc.outputs["name"]
+    ).after(upload_task)
+
+    # =========================================================================
+    # Step 8: Optional smoke test
+    # =========================================================================
+
     with dsl.If(run_smoke_test == True):  # noqa: E712
         triton_host = f"{triton_service_name}.{triton_namespace}.svc.cluster.local"
 
@@ -135,10 +265,8 @@ def fraud_detection_training_pipeline(
             triton_host=triton_host,
             triton_port=triton_port,
             model_name="prediction_and_shapley",
-            timeout_seconds=120,  # Wait up to 2min for Triton to reload model
+            timeout_seconds=120,
         )
-
-        # Ensure smoke test runs after upload completes
         smoke_task.after(upload_task)
 
 

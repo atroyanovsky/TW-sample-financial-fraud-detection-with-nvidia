@@ -9,5 +9,11 @@ from .prepare_gnn import prepare_gnn_datasets
 from .prepare_xgb import prepare_xgb_datasets
 from .split_data import split_by_year
 from .test_model import smoke_test_triton, validate_model_inference
-from .train_model import prepare_training_config, train_fraud_model, upload_model_to_s3
+from .train_model import (
+    prepare_training_config,
+    download_gnn_data_to_pvc,
+    copy_config_to_pvc,
+    run_nvidia_training,
+    upload_model_from_pvc,
+)
 from .visualize import visualize_data_stats, visualize_graph_structure

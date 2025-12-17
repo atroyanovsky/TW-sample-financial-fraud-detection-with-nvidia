@@ -2,18 +2,15 @@
 # Code modified by vshardul@amazon.com based on Apache License, Version 2.0 code provided by NVIDIA Corporation.
 """Component: Train GNN+XGBoost fraud detection model using NVIDIA container."""
 
-import json
 from kfp import dsl
-from kfp.dsl import Artifact, Input, Metrics, Output
+from kfp.dsl import Artifact, Input, Output
 
 
 @dsl.component(
     base_image="python:3.12",
-    packages_to_install=["boto3==1.34.0"],
 )
 def prepare_training_config(
     config_artifact: Output[Artifact],
-    # GNN hyperparameters
     gnn_hidden_channels: int = 32,
     gnn_n_hops: int = 2,
     gnn_layer: str = "SAGEConv",
@@ -21,7 +18,6 @@ def prepare_training_config(
     gnn_batch_size: int = 4096,
     gnn_fan_out: int = 10,
     gnn_num_epochs: int = 8,
-    # XGBoost hyperparameters
     xgb_max_depth: int = 6,
     xgb_learning_rate: float = 0.2,
     xgb_num_parallel_tree: int = 3,
@@ -29,6 +25,9 @@ def prepare_training_config(
     xgb_gamma: float = 0.0,
 ) -> dict:
     """Prepare training configuration JSON for NVIDIA training container.
+
+    Creates the config.json that the NVIDIA financial-fraud-training container
+    expects at /app/config.json. Paths are hardcoded to container mount points.
 
     Args:
         config_artifact: Output artifact containing training config JSON
@@ -82,41 +81,114 @@ def prepare_training_config(
     }
 
 
-@dsl.container_component
-def train_fraud_model(
-    gnn_data_uri: str,
-    training_config: Input[Artifact],
-    trained_model: Output[Artifact],
+@dsl.component(
+    base_image="python:3.12",
+    packages_to_install=["boto3==1.34.0"],
+)
+def download_gnn_data_to_pvc(
+    gnn_data_s3_uri: str,
+    s3_region: str = "us-east-1",
+    mount_path: str = "/data",
 ):
-    """Train GNN+XGBoost fraud detection model.
+    """Download GNN data from S3 to a mounted PVC.
 
-    Uses NVIDIA's financial-fraud-training container to train a hybrid
-    GNN + XGBoost model for fraud detection.
+    This component should have a PVC mounted at mount_path.
+    It downloads all GNN preprocessing outputs from S3.
 
     Args:
-        gnn_data_uri: S3 URI to GNN data directory
-        training_config: Training configuration JSON artifact
-        trained_model: Output artifact for trained model repository
+        gnn_data_s3_uri: S3 URI (e.g., s3://bucket/preprocessing/gnn)
+        s3_region: AWS region
+        mount_path: Where PVC is mounted (default /data)
+    """
+    import os
+    import boto3
+    from urllib.parse import urlparse
 
-    Output structure:
-        trained_model/
-        └── python_backend_model_repository/
-            └── prediction_and_shapley/
-                ├── 1/
-                │   ├── embedding_based_xgboost.json
-                │   ├── model.py
-                │   ├── meta.json
-                │   └── state_dict_gnn_model.pth
-                └── config.pbtxt
+    parsed = urlparse(gnn_data_s3_uri)
+    bucket = parsed.netloc
+    prefix = parsed.path.lstrip('/')
+
+    s3 = boto3.client('s3', region_name=s3_region)
+
+    print(f"Downloading from s3://{bucket}/{prefix} to {mount_path}")
+
+    paginator = s3.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get('Contents', []):
+            key = obj['Key']
+            relative_path = key[len(prefix):].lstrip('/')
+            local_path = os.path.join(mount_path, relative_path)
+
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            print(f"  {key} -> {local_path}")
+            s3.download_file(bucket, key, local_path)
+
+    print(f"\nContents of {mount_path}:")
+    for root, dirs, files in os.walk(mount_path):
+        for f in files:
+            path = os.path.join(root, f)
+            size = os.path.getsize(path)
+            print(f"  {os.path.relpath(path, mount_path)} ({size} bytes)")
+
+
+@dsl.component(
+    base_image="python:3.12",
+)
+def copy_config_to_pvc(
+    training_config: Input[Artifact],
+    config_mount_path: str = "/config",
+):
+    """Copy training config to a mounted PVC.
+
+    The training container expects config at /app/config.json.
+    We copy to PVC so it persists for the training container.
+
+    Args:
+        training_config: Training config artifact
+        config_mount_path: Where config PVC is mounted
+    """
+    import shutil
+    import os
+
+    dest_path = os.path.join(config_mount_path, "config.json")
+    shutil.copy(training_config.path, dest_path)
+
+    print(f"Copied config to {dest_path}")
+    with open(dest_path) as f:
+        print(f.read())
+
+
+@dsl.container_component
+def run_nvidia_training(
+    data_mount_path: str = "/data",
+    output_mount_path: str = "/trained_models",
+    config_mount_path: str = "/config",
+):
+    """Run NVIDIA training container with mounted PVCs.
+
+    Expects three PVCs mounted:
+    - data_mount_path: Contains GNN preprocessed data
+    - output_mount_path: Where trained model will be written
+    - config_mount_path: Contains config.json
+
+    The container reads config from /app/config.json, so we symlink it.
+
+    Args:
+        data_mount_path: Mount point for GNN data PVC
+        output_mount_path: Mount point for output PVC
+        config_mount_path: Mount point for config PVC
     """
     return dsl.ContainerSpec(
         image="nvcr.io/nvidia/cugraph/financial-fraud-training:2.0.0",
         command=["/bin/bash", "-c"],
         args=[
-            # The container entrypoint handles training
-            # We just need to ensure config is in place
-            "cp {{$.inputs.artifacts['training_config'].path}} /app/config.json && "
-            "python /app/main.py"
+            # Link config to expected location and run training
+            f"ln -sf {config_mount_path}/config.json /app/config.json && "
+            "cat /app/config.json && "
+            f"echo '=== Data contents ===' && ls -la {data_mount_path}/ && "
+            "echo '=== Starting training ===' && "
+            "cd /app && python main.py && "
+            f"echo '=== Training complete ===' && ls -la {output_mount_path}/"
         ],
     )
 
@@ -125,22 +197,29 @@ def train_fraud_model(
     base_image="python:3.12",
     packages_to_install=["boto3==1.34.0"],
 )
-def upload_model_to_s3(
-    trained_model: Input[Artifact],
-    model_s3_uri: Output[Artifact],
+def upload_model_from_pvc(
     s3_prefix: str = "model-repository",
     s3_region: str = "us-east-1",
+    output_mount_path: str = "/trained_models",
 ) -> dict:
-    """Upload trained model to S3.
+    """Upload trained model from PVC to S3.
 
-    Uploads the trained model repository to S3 for deployment with Triton.
-    S3 bucket is read from S3_BUCKET environment variable (injected via ConfigMap).
+    Reads MODEL_BUCKET from environment (injected via ConfigMap).
+    Uploads the model repository structure that Triton expects.
+
+    The training container outputs:
+        /trained_models/python_backend_model_repository/
+        └── prediction_and_shapley/
+            ├── 1/
+            │   └── ... model files ...
+            └── config.pbtxt
+
+    We upload to s3://bucket/model-repository/prediction_and_shapley/...
 
     Args:
-        trained_model: Local trained model artifact
-        model_s3_uri: Output artifact with S3 URI
-        s3_prefix: S3 key prefix for model
+        s3_prefix: S3 key prefix (default: model-repository)
         s3_region: AWS region
+        output_mount_path: Where output PVC is mounted
 
     Returns:
         Dict with S3 URI and upload stats
@@ -148,28 +227,27 @@ def upload_model_to_s3(
     import os
     import boto3
     from pathlib import Path
-    from datetime import datetime
 
     s3_bucket = os.environ.get("MODEL_BUCKET", "")
     if not s3_bucket:
         raise ValueError("MODEL_BUCKET environment variable not set")
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-
     s3 = boto3.client("s3", region_name=s3_region)
-    model_path = Path(trained_model.path)
 
-    # The training container outputs to python_backend_model_repository/
-    # We need to upload the contents to s3_prefix/ (model-repository/)
-    # Triton expects: s3://bucket/model-repository/prediction_and_shapley/...
-    model_repo_path = model_path / "python_backend_model_repository"
+    # Find the model repository in the output
+    model_repo_path = Path(output_mount_path) / "python_backend_model_repository"
     if not model_repo_path.exists():
-        model_repo_path = model_path  # fallback if structure differs
+        model_repo_path = Path(output_mount_path)
+        print(f"Warning: python_backend_model_repository not found, using {output_mount_path}")
+
+    print(f"Model repo contents at {model_repo_path}:")
+    for item in model_repo_path.rglob("*"):
+        if item.is_file():
+            print(f"  {item.relative_to(model_repo_path)}")
 
     uploaded_files = 0
     total_bytes = 0
 
-    # Upload all files in the model directory
     for root, dirs, files in os.walk(model_repo_path):
         for file in files:
             local_path = os.path.join(root, file)
@@ -177,22 +255,17 @@ def upload_model_to_s3(
             s3_key = f"{s3_prefix}/{relative_path}"
 
             file_size = os.path.getsize(local_path)
-            print(f"Uploading {relative_path} ({file_size} bytes)")
+            print(f"Uploading {relative_path} ({file_size} bytes) -> s3://{s3_bucket}/{s3_key}")
 
             s3.upload_file(local_path, s3_bucket, s3_key)
             uploaded_files += 1
             total_bytes += file_size
 
     s3_uri = f"s3://{s3_bucket}/{s3_prefix}"
-    print(f"Uploaded {uploaded_files} files ({total_bytes} bytes) to {s3_uri}")
-
-    # Write S3 URI to output artifact
-    with open(model_s3_uri.path, "w") as f:
-        f.write(s3_uri)
+    print(f"\nUploaded {uploaded_files} files ({total_bytes} bytes) to {s3_uri}")
 
     return {
         "s3_uri": s3_uri,
         "uploaded_files": uploaded_files,
         "total_bytes": total_bytes,
-        "timestamp": timestamp,
     }
