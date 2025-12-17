@@ -121,6 +121,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       }),
       new blueprints.addons.SecretsStoreAddOn(),
       new blueprints.addons.CertManagerAddOn(),
+      new blueprints.addons.EbsCsiDriverAddOn({ storageClass: "gp3" }),
       new blueprints.addons.ArgoCDAddOn({
         bootstrapRepo: {
           repoUrl: repoUrl,
