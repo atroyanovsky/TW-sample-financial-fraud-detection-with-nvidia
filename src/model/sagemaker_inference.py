@@ -141,6 +141,9 @@ def load_hetero_graph(gnn_data_dir, partition):
           *_label.csv -> exactly one -> edge_label_<edge> (DataFrame)
     """
     base = os.path.join(gnn_data_dir, f"{partition}_gnn")
+    # Fall back to gnn_data_dir root if partition subdirectory doesn't exist
+    if not os.path.isdir(base):
+        base = gnn_data_dir
     nodes_dir = os.path.join(base, "nodes")
     edges_dir = os.path.join(base, "edges")
 
