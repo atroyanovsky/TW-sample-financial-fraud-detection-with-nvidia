@@ -221,7 +221,7 @@ fi`]
     initContainers: [
       {
         name: "deploykf-plugin-setup--kubectl",
-        image: "docker.io/bitnami/kubectl:1.26.10",
+        image: "docker.io/alpine/kubectl:1.33.4",
         command: ["/bin/sh", "-c"],
         args: [`echo "copying 'kubectl' binary to shared volume..."
 cp -f "$(which kubectl)" /tools/kubectl`],
