@@ -122,7 +122,7 @@ exec torchrun --standalone --nnodes=1 --nproc_per_node=1 /app/main.py --config /
             TrainingJobName=self.training_job_name,
             RoleArn=self.config.sagemaker_training_role,
             AlgorithmSpecification={
-                'TrainingImage': f"{self.config.training_repo}:2.0.0",
+                'TrainingImage': f"{self.config.training_repo}:latest",
                 'TrainingInputMode': 'File',
                 'ContainerEntrypoint': ['/bin/bash', '-c'],
                 'ContainerArguments': [
