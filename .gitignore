@@ -26,3 +26,7 @@ probe-test-results.json.DS_Store
 
 # Mac
 .DS_Store
+
+# EDA output
+eda_output/
+eda_output/*
