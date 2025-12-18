@@ -15,6 +15,16 @@ export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
   modelBucketName: string;
 
   kubeflowBucketName: string;
+
+  /**
+   * The S3 bucket name for raw data (e.g., TabFormer dataset)
+   */
+  dataBucketName: string;
+
+  /**
+   * The S3 bucket name for model registry (Triton model repository)
+   */
+  modelRegistryBucketName: string;
 }
 
 export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
@@ -141,7 +151,11 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
         },
         values: argoCdValues
       }),
-      new KfAddon({ bucketName: props.kubeflowBucketName })
+      new KfAddon({
+        bucketName: props.kubeflowBucketName,
+        dataBucketName: props.dataBucketName,
+        modelBucketName: props.modelRegistryBucketName,
+      })
     ];
 
     // Use EKS with Karpenter instead of Automode for GPU driver flexibility

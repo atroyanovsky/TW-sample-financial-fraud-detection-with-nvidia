@@ -15,7 +15,9 @@ const env = {
 };
 
 const modelBucketName = "ml-on-containers-" + process.env.CDK_DEFAULT_ACCOUNT;
-const kfBucketName = "kubeflow-pipelines-" + process.env.CDK_DEFAULT_ACCOUNT;
+const kfBucketName = "kubeflow-pipelines" + process.env.CDK_DEFAULT_ACCOUNT;
+const dataBucketName = modelBucketName;
+const modelRegistryBucketName = modelBucketName + "-model-registry";
 
 const tarExtractorStack = new TarExtractorStack(
   app,
@@ -41,7 +43,7 @@ const sagemakerNotebookRole = new SageMakerNotebookRoleStack(
   {
     env: env,
     modelBucketArn: "arn:aws:s3:::" + modelBucketName,
-    modelRegistryBucketArn: "arn:aws:s3:::" + modelBucketName + "-model-registry",
+    modelRegistryBucketArn: "arn:aws:s3:::" + modelRegistryBucketName,
   },
 );
 
@@ -58,8 +60,10 @@ const mainStack = new NvidiaFraudDetectionBlueprint(
   "NvidiaFraudDetectionBlueprint",
   {
     env: env,
-    modelBucketName: modelBucketName + "-model-registry",
-    kubeflowBucketName: kfBucketName
+    modelBucketName: modelRegistryBucketName,
+    kubeflowBucketName: kfBucketName,
+    dataBucketName: dataBucketName,
+    modelRegistryBucketName: modelRegistryBucketName,
   },
 );
 

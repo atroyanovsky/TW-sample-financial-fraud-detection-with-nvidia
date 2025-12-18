@@ -8,7 +8,9 @@ import { KfIAMPolicy } from "./kf-policy";
 import { KubernetesObjectValue } from "aws-cdk-lib/aws-eks";
 
 export interface KfAddonProps {
-  bucketName: string
+  bucketName: string;
+  dataBucketName: string;
+  modelBucketName: string;
 }
 
 export class KfAddon implements ClusterAddOn {
@@ -16,7 +18,9 @@ export class KfAddon implements ClusterAddOn {
 
   @dependable("ArgoCDAddOn")
   deploy(clusterInfo: ClusterInfo): Promise<Construct> | void {
-    const kfPolicyDoc = iam.PolicyDocument.fromJson(KfIAMPolicy(this.props.bucketName));
+    const kfPolicyDoc = iam.PolicyDocument.fromJson(
+      KfIAMPolicy(this.props.bucketName, this.props.dataBucketName, this.props.modelBucketName)
+    );
 
     const kfPolicy = new iam.ManagedPolicy(clusterInfo.cluster, "KubeflowPolicy", { document: kfPolicyDoc });
 
