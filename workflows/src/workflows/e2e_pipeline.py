@@ -6,15 +6,12 @@ This pipeline minimizes S3 usage:
 - S3 Input: Raw TabFormer CSV data
 - PVC: All intermediate data (cleaned, split, transformed, GNN-ready)
 - S3 Output: Final trained model for Triton
+
+Compatible with KFP 2.1.x and kfp-kubernetes 1.0.x
 """
 
 from kfp import compiler, dsl
 from kfp import kubernetes
-
-from .components.test_model import smoke_test_triton
-
-# ConfigMap name containing S3 configuration
-CONFIG_MAP = "fraud-detection-config"
 
 # PVC configuration
 DATA_PVC_SIZE = "100Gi"  # Large enough for raw + processed data
@@ -28,20 +25,35 @@ STORAGE_CLASS = "gp3"  # AWS EBS gp3
 
 
 @dsl.component(
-    base_image="python:3.12",
-    packages_to_install=["boto3==1.34.0", "pandas==2.2.0", "pyarrow==15.0.0"],
+    base_image="python:3.11",
+    packages_to_install=[
+        # boto3 + deps
+        "boto3",
+        "botocore",
+        "s3transfer",
+        "jmespath",
+        "python-dateutil",
+        "urllib3",
+        "six",
+        # pandas + deps
+        "pandas",
+        "numpy",
+        "pytz",
+        "tzdata",
+        # pyarrow (no python deps)
+        "pyarrow",
+    ],
 )
 def load_raw_data_to_pvc(
+    s3_bucket: str,
     s3_region: str = "us-east-1",
     source_path: str = "data/TabFormer/raw/card_transaction.v1.csv",
     data_mount_path: str = "/data",
 ):
     """Load raw TabFormer CSV from S3 to PVC.
 
-    Reads S3_BUCKET from environment (ConfigMap).
-    Source path defaults to data/TabFormer/raw/card_transaction.v1.csv.
-
     Args:
+        s3_bucket: S3 bucket name
         s3_region: AWS region
         source_path: S3 key for raw CSV file
         data_mount_path: Where data PVC is mounted
@@ -50,9 +62,8 @@ def load_raw_data_to_pvc(
     import boto3
     import pandas as pd
 
-    s3_bucket = os.environ.get("S3_BUCKET", "")
     if not s3_bucket:
-        raise ValueError("S3_BUCKET environment variable required")
+        raise ValueError("s3_bucket parameter is required")
 
     s3 = boto3.client("s3", region_name=s3_region)
 
@@ -75,13 +86,27 @@ def load_raw_data_to_pvc(
 
 
 @dsl.component(
-    base_image="python:3.12",
+    base_image="python:3.11",
     packages_to_install=[
-        "pandas==2.2.0",
-        "numpy==1.26.0",
-        "category_encoders==2.6.0",
-        "scikit-learn==1.4.0",
-        "pyarrow==15.0.0",
+        # pandas + deps
+        "pandas",
+        "numpy",
+        "python-dateutil",
+        "six",
+        "pytz",
+        "tzdata",
+        # scikit-learn + deps
+        "scikit-learn",
+        "scipy",
+        "joblib",
+        "threadpoolctl",
+        # category_encoders + deps
+        "category_encoders",
+        "patsy",
+        "statsmodels",
+        "packaging",
+        # pyarrow
+        "pyarrow",
     ],
 )
 def preprocess_data_on_pvc(
@@ -306,7 +331,7 @@ def preprocess_data_on_pvc(
     }
 
 
-@dsl.component(base_image="python:3.12")
+@dsl.component(base_image="python:3.11")
 def prepare_training_config_on_pvc(
     data_mount_path: str = "/data",
     gnn_hidden_channels: int = 32,
@@ -374,20 +399,38 @@ def run_nvidia_training_on_pvc():
     )
 
 
-@dsl.component(base_image="python:3.12", packages_to_install=["boto3==1.34.0"])
+@dsl.component(
+    base_image="python:3.11",
+    packages_to_install=[
+        "boto3",
+        "botocore",
+        "s3transfer",
+        "jmespath",
+        "python-dateutil",
+        "urllib3",
+        "six",
+    ],
+)
 def upload_model_to_s3(
+    model_bucket: str,
     model_mount_path: str = "/trained_models",
     s3_prefix: str = "model-repository",
     s3_region: str = "us-east-1",
 ) -> dict:
-    """Upload trained model from PVC to S3."""
+    """Upload trained model from PVC to S3.
+
+    Args:
+        model_bucket: S3 bucket for model output
+        model_mount_path: Where model PVC is mounted
+        s3_prefix: S3 key prefix for model files
+        s3_region: AWS region
+    """
     import os
     import boto3
     from pathlib import Path
 
-    s3_bucket = os.environ.get("MODEL_BUCKET", "")
-    if not s3_bucket:
-        raise ValueError("MODEL_BUCKET environment variable not set")
+    if not model_bucket:
+        raise ValueError("model_bucket parameter is required")
 
     s3 = boto3.client("s3", region_name=s3_region)
     model_repo = Path(model_mount_path) / "python_backend_model_repository"
@@ -403,11 +446,11 @@ def upload_model_to_s3(
             s3_key = f"{s3_prefix}/{rel_path}"
             size = os.path.getsize(local_path)
             print(f"Uploading {rel_path} ({size} bytes)")
-            s3.upload_file(local_path, s3_bucket, s3_key)
+            s3.upload_file(local_path, model_bucket, s3_key)
             uploaded += 1
             total_bytes += size
 
-    s3_uri = f"s3://{s3_bucket}/{s3_prefix}"
+    s3_uri = f"s3://{model_bucket}/{s3_prefix}"
     print(f"\nUploaded {uploaded} files ({total_bytes} bytes) to {s3_uri}")
     return {"s3_uri": s3_uri, "files": uploaded, "bytes": total_bytes}
 
@@ -423,7 +466,9 @@ def upload_model_to_s3(
     "PVC training -> S3 model output. Minimizes S3 usage with PVC for intermediates.",
 )
 def fraud_detection_e2e_pipeline(
-    # S3 configuration
+    # S3 configuration (now as parameters instead of ConfigMap)
+    s3_bucket: str = "ml-on-containers-915948456033",
+    model_bucket: str = "ml-on-containers-915948456033-model-registry",
     s3_region: str = "us-east-1",
     source_path: str = "data/TabFormer/raw/card_transaction.v1.csv",
     s3_model_prefix: str = "model-repository",
@@ -447,15 +492,8 @@ def fraud_detection_e2e_pipeline(
     xgb_num_parallel_tree: int = 3,
     xgb_num_boost_round: int = 512,
     xgb_gamma: float = 0.0,
-    # Validation
-    run_smoke_test: bool = True,
-    triton_service_name: str = "triton-inference-server",
-    triton_namespace: str = "triton",
-    triton_port: int = 8005,
 ):
     """End-to-end fraud detection pipeline.
-
-    Default S3 source: s3://{S3_BUCKET}/data/TabFormer/raw/card_transaction.v1.csv
 
     Data flow:
     1. S3 -> Load raw TabFormer CSV to data PVC
@@ -463,9 +501,12 @@ def fraud_detection_e2e_pipeline(
     3. PVC -> Train GNN+XGBoost model (GPU)
     4. PVC -> Upload trained model to S3
 
-    ConfigMap 'fraud-detection-config' must contain:
-    - s3_bucket: S3 bucket for raw data and model output
-    - model_bucket: S3 bucket for model output (can be same as s3_bucket)
+    Args:
+        s3_bucket: S3 bucket containing raw data
+        model_bucket: S3 bucket for model output (can be same as s3_bucket)
+        s3_region: AWS region
+        source_path: S3 key for raw CSV file
+        s3_model_prefix: S3 key prefix for model output
     """
     # Create PVCs
     data_pvc = kubernetes.CreatePVC(
@@ -484,17 +525,13 @@ def fraud_detection_e2e_pipeline(
 
     # Step 1: Load raw data from S3 to PVC
     load_task = load_raw_data_to_pvc(
+        s3_bucket=s3_bucket,
         s3_region=s3_region,
         source_path=source_path,
         data_mount_path="/data",
     )
     load_task.after(data_pvc)
     kubernetes.mount_pvc(load_task, pvc_name=data_pvc.outputs["name"], mount_path="/data")
-    kubernetes.use_config_map_as_env(
-        load_task,
-        config_map_name=CONFIG_MAP,
-        config_map_key_to_env={"s3_bucket": "S3_BUCKET"},
-    )
 
     # Step 2: Preprocess data on PVC
     preprocess_task = preprocess_data_on_pvc(
@@ -534,40 +571,22 @@ def fraud_detection_e2e_pipeline(
     kubernetes.mount_pvc(train_task, pvc_name=data_pvc.outputs["name"], mount_path="/data")
     kubernetes.mount_pvc(train_task, pvc_name=model_pvc.outputs["name"], mount_path="/trained_models")
 
-    # GPU configuration
+    # GPU configuration (using node selector only - compatible with kfp-kubernetes 1.0.x)
     kubernetes.add_node_selector(train_task, label_key="nvidia.com/gpu", label_value="true")
-    kubernetes.add_toleration(train_task, key="nvidia.com/gpu", operator="Exists", effect="NoSchedule")
-    train_task.set_accelerator_type("nvidia.com/gpu")
-    train_task.set_accelerator_limit(1)
 
     # Step 5: Upload model to S3
     upload_task = upload_model_to_s3(
+        model_bucket=model_bucket,
         model_mount_path="/trained_models",
         s3_prefix=s3_model_prefix,
         s3_region=s3_region,
     )
     upload_task.after(train_task)
     kubernetes.mount_pvc(upload_task, pvc_name=model_pvc.outputs["name"], mount_path="/trained_models")
-    kubernetes.use_config_map_as_env(
-        upload_task,
-        config_map_name=CONFIG_MAP,
-        config_map_key_to_env={"model_bucket": "MODEL_BUCKET"},
-    )
 
     # Step 6: Cleanup PVCs
     kubernetes.DeletePVC(pvc_name=data_pvc.outputs["name"]).after(upload_task)
     kubernetes.DeletePVC(pvc_name=model_pvc.outputs["name"]).after(upload_task)
-
-    # Step 7: Optional smoke test
-    with dsl.If(run_smoke_test == True):  # noqa: E712
-        triton_host = f"{triton_service_name}.{triton_namespace}.svc.cluster.local"
-        smoke_task = smoke_test_triton(
-            triton_host=triton_host,
-            triton_port=triton_port,
-            model_name="prediction_and_shapley",
-            timeout_seconds=120,
-        )
-        smoke_task.after(upload_task)
 
 
 if __name__ == "__main__":
