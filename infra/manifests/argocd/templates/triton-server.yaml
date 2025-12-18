@@ -23,7 +23,7 @@ spec:
           type: ClusterIP
         ingress:
           enabled: true
-          scheme: internet-facing
+          scheme: internal
           exposeMetrics: true
   destination:
     server: https://kubernetes.default.svc
