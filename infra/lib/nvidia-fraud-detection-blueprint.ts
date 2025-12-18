@@ -55,7 +55,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       taints: [
         {
           key: "nvidia.com/gpu",
-          value: "Exists",
+          value: "true",
           effect: "NoSchedule"
         },
       ],
@@ -173,7 +173,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
               {
                 deviceName: "/dev/xvda",
                 ebs: {
-                  volumeSize: "10Gi",
+                  volumeSize: "50Gi",
                   deleteOnTermination: true
                 }
               }

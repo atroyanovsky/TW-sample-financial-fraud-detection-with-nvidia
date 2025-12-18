@@ -15,7 +15,7 @@ const env = {
 };
 
 const modelBucketName = "ml-on-containers-" + process.env.CDK_DEFAULT_ACCOUNT;
-const kfBucketName = "kubeflow-pipelines" + process.env.CDK_DEFAULT_ACCOUNT;
+const kfBucketName = "kubeflow-pipelines-" + process.env.CDK_DEFAULT_ACCOUNT;
 
 const tarExtractorStack = new TarExtractorStack(
   app,

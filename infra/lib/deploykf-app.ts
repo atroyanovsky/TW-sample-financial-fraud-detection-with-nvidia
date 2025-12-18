@@ -101,7 +101,7 @@ deploykf_core:
       plugins:
         - kind: AwsIamForServiceAccount
           spec:
-            awsIamRole:${roleArn}
+            awsIamRole: ${roleArn}
 
 ## --------------------------------------------------------------------------------
 ##                                   deploykf-opt
