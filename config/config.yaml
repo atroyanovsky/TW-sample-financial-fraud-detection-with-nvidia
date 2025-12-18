@@ -1,0 +1,23 @@
+training:
+  paths:
+    data_dir: /opt/ml/input/data/data
+    output_dir: /opt/ml/model
+
+  models:
+    - kind: GNN_XGBoost
+      gpu: single
+      hyperparameters:
+        gnn:
+          hidden_channels: 32
+          n_hops: 2
+          layer: SAGEConv
+          dropout_prob: 0.1
+          batch_size: 1024
+          fan_out: 10
+          num_epochs: 20
+        xgb:
+          max_depth: 6
+          learning_rate: 0.2
+          num_parallel_tree: 3
+          num_boost_round: 512
+          gamma: 0.0
