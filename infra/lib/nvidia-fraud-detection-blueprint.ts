@@ -7,6 +7,7 @@ import { Construct } from 'constructs';
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { KfAddon } from "./kf-addon";
 import { argoCdValues } from './argocd-values';
+import { NodePoolAddon } from './nodepool-addon';
 
 export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
   /**
@@ -123,14 +124,68 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
     const repoUrl = "https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia";
 
     Reflect.defineMetadata("ordered", true, blueprints.addons.ArgoCDAddOn)
+    Reflect.defineMetadata("ordered", true, blueprints.addons.KarpenterV1AddOn)
 
     const addons = [
+      new blueprints.addons.KarpenterV1AddOn({
+        nodePoolSpec: g4dnNodePoolSpec,
+        ec2NodeClassSpec: {
+          amiFamily: "AL2023",
+          amiSelectorTerms: [{ alias: "al2023@latest" }],
+          subnetSelectorTerms: [
+            {
+              tags: {
+                "Name": "*Private*"
+              }
+            }
+          ],
+          securityGroupSelectorTerms: [
+            {
+              tags: {
+                "aws:eks:cluster-name": "nvidia-fraud-detection-cluster-blueprint"
+              }
+            }
+          ],
+          blockDeviceMappings: [
+            {
+              deviceName: "/dev/xvda",
+              ebs: {
+                volumeSize: "50Gi",
+                deleteOnTermination: true
+              }
+            }
+          ]
+        }
+      }),
+      new NodePoolAddon({
+        nodePoolSpec: {
+          labels: {
+            "node-type": "general-purpose",
+            "instance-family": "m5"
+          },
+          requirements: [
+            { key: "karpenter.sh/capacity-type", operator: "In", values: ["on-demand"] },
+            { key: "node.kubernetes.io/instance-type", operator: "In", values: ["m5.2xlarge"] },
+            { key: "kubernetes.io/arch", operator: "In", values: ["amd64"] }
+          ],
+          expireAfter: "24h",
+          disruption: {
+            consolidationPolicy: "WhenEmpty",
+            consolidateAfter: "30s"
+          },
+          limits: {
+            cpu: 64,
+            memory: "256Gi"
+          },
+          weight: 10
+        },
+      }),
       new blueprints.addons.AwsLoadBalancerControllerAddOn(),
       new blueprints.addons.GpuOperatorAddon({
         version: "v25.3.2"
       }),
       new blueprints.addons.SecretsStoreAddOn(),
-      new blueprints.addons.CertManagerAddOn(),
+      //new blueprints.addons.CertManagerAddOn(),
       new blueprints.addons.EbsCsiDriverAddOn({ storageClass: "gp3" }),
       new blueprints.addons.ArgoCDAddOn({
         bootstrapRepo: {
@@ -164,42 +219,15 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       .region(this.region)
       .version(eks.KubernetesVersion.V1_33)
       .addOns(
-        new blueprints.addons.KarpenterV1AddOn({
-          nodePoolSpec: g4dnNodePoolSpec,
-          ec2NodeClassSpec: {
-            amiFamily: "AL2023",
-            amiSelectorTerms: [{ alias: "al2023@latest" }],
-            subnetSelectorTerms: [
-              {
-                tags: {
-                  "Name": "*Private*"
-                }
-              }
-            ],
-            securityGroupSelectorTerms: [
-              {
-                tags: {
-                  "aws:eks:cluster-name": "nvidia-fraud-detection-cluster-blueprint"
-                }
-              }
-            ],
-            blockDeviceMappings: [
-              {
-                deviceName: "/dev/xvda",
-                ebs: {
-                  volumeSize: "50Gi",
-                  deleteOnTermination: true
-                }
-              }
-            ]
-          }
-        }),
         ...addons
       )
       .teams(triton)
       .resourceProvider(blueprints.GlobalResources.Vpc, new blueprints.DirectVpcProvider(vpc))
       .clusterProvider(new blueprints.MngClusterProvider({
         amiType: eks.NodegroupAmiType.AL2023_X86_64_STANDARD,
+        minSize: 2,
+        desiredSize: 3,
+        maxSize: 5,
         instanceTypes: [ec2.InstanceType.of(ec2.InstanceClass.M5, ec2.InstanceSize.XLARGE)]
       }))
       .build(this, "nvidia-fraud-detection-cluster-blueprint");

@@ -133,3 +133,20 @@ The infrastructure can be customized by modifying:
 4. Monitor Karpenter logs for node provisioning issues
 
 For more detailed documentation, refer to the `docs` directory in the root of this repository.
+
+commands:
+
+```
+# download the latest version of the script
+curl -fL -o "sync_argocd_apps.sh" \
+  "https://raw.githubusercontent.com/deployKF/deployKF/main/scripts/sync_argocd_apps.sh"
+
+# ensure the script is executable
+chmod +x ./sync_argocd_apps.sh
+
+# ensure your kubectl context is set correctly
+kubectl config current-context
+
+# run the script
+bash ./sync_argocd_apps.sh
+```

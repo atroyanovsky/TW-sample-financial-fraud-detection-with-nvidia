@@ -62,7 +62,9 @@ deploykf_dependencies:
   ##             cert-manager
   ## --------------------------------------
   cert_manager:
-    {} # <-- REMOVE THIS, IF YOU INCLUDE VALUES UNDER THIS SECTION!
+    images:
+      kubectl:
+        repository: docker.io/bitnamilegacy/kubectl
 
   ## --------------------------------------
   ##                 istio
@@ -74,7 +76,9 @@ deploykf_dependencies:
   ##                kyverno
   ## --------------------------------------
   kyverno:
-    {} # <-- REMOVE THIS, IF YOU INCLUDE VALUES UNDER THIS SECTION!
+    images:
+      kubectl:
+        repository: docker.io/bitnamilegacy/kubectl
 
 ## --------------------------------------------------------------------------------
 ##                                  deploykf-core
@@ -85,7 +89,9 @@ deploykf_core:
   ##             deploykf-auth
   ## --------------------------------------
   deploykf_auth:
-    {} # <-- REMOVE THIS, IF YOU INCLUDE VALUES UNDER THIS SECTION!
+    images:
+      kubectl:
+        repository: docker.io/bitnamilegacy/kubectl
 
   ## --------------------------------------
   ##        deploykf-istio-gateway
@@ -118,7 +124,9 @@ deploykf_opt:
   ##            deploykf-mysql
   ## --------------------------------------
   deploykf_mysql:
-    {} # <-- REMOVE THIS, IF YOU INCLUDE VALUES UNDER THIS SECTION!
+    images:
+      kubectl:
+        repository: docker.io/bitnamilegacy/kubectl
 
 ## --------------------------------------------------------------------------------
 ##                                  kubeflow-tools
@@ -176,12 +184,6 @@ kubeflow_dependencies:
       destination: {
         server: "https://kubernetes.default.svc",
         namespace: "argocd"
-      },
-      syncPolicy: {
-        automated: {
-          prune: true,
-          selfHeal: true
-        }
       }
     }
   }
