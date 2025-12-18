@@ -33,14 +33,17 @@ STORAGE_CLASS = "gp3"  # AWS EBS gp3
 )
 def load_raw_data_to_pvc(
     s3_region: str = "us-east-1",
+    source_path: str = "data/TabFormer/raw/card_transaction.v1.csv",
     data_mount_path: str = "/data",
 ):
     """Load raw TabFormer CSV from S3 to PVC.
 
-    Reads S3_BUCKET and SOURCE_PATH from environment (ConfigMap).
+    Reads S3_BUCKET from environment (ConfigMap).
+    Source path defaults to data/TabFormer/raw/card_transaction.v1.csv.
 
     Args:
         s3_region: AWS region
+        source_path: S3 key for raw CSV file
         data_mount_path: Where data PVC is mounted
     """
     import os
@@ -48,10 +51,8 @@ def load_raw_data_to_pvc(
     import pandas as pd
 
     s3_bucket = os.environ.get("S3_BUCKET", "")
-    source_path = os.environ.get("SOURCE_PATH", "")
-
-    if not s3_bucket or not source_path:
-        raise ValueError("S3_BUCKET and SOURCE_PATH env vars required")
+    if not s3_bucket:
+        raise ValueError("S3_BUCKET environment variable required")
 
     s3 = boto3.client("s3", region_name=s3_region)
 
@@ -100,7 +101,6 @@ def preprocess_data_on_pvc(
         /data/
         ├── raw/card_transaction.parquet
         ├── processed/
-        │   ├── cleaned.parquet
         │   ├── train.parquet
         │   ├── validation.parquet
         │   └── test.parquet
@@ -132,7 +132,6 @@ def preprocess_data_on_pvc(
     import pandas as pd
     from category_encoders import BinaryEncoder
     from sklearn.compose import ColumnTransformer
-    from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
     # Constants
@@ -144,8 +143,6 @@ def preprocess_data_on_pvc(
     COL_YEAR = "Year"
     COL_AMOUNT = "Amount"
     COL_TIME = "Time"
-    COL_USER_ID = "user_id"
-    COL_MERCHANT_ID = "merchant_id"
 
     # Paths
     raw_path = os.path.join(data_mount_path, "raw", "card_transaction.parquet")
@@ -157,9 +154,7 @@ def preprocess_data_on_pvc(
     os.makedirs(transformers_dir, exist_ok=True)
     os.makedirs(gnn_dir, exist_ok=True)
 
-    # =========================================================================
     # Step 1: Load and clean data
-    # =========================================================================
     print("Loading raw data...")
     df = pd.read_parquet(raw_path)
     original_count = len(df)
@@ -216,9 +211,7 @@ def preprocess_data_on_pvc(
     print(f"Records: {original_count} -> {after_dedup_count} -> {final_count}")
     print(f"Fraud rate: {fraud_count/final_count:.4f}")
 
-    # =========================================================================
     # Step 2: Encode identifiers
-    # =========================================================================
     MERCHANT_AND_USER_COLS = [COL_MERCHANT, COL_MCC, COL_CARD]
 
     id_transformer = ColumnTransformer(
@@ -232,14 +225,9 @@ def preprocess_data_on_pvc(
     id_transformer.fit(df[MERCHANT_AND_USER_COLS])
 
     with open(os.path.join(transformers_dir, "id_transformer.pkl"), "wb") as f:
-        pickle.dump({
-            "transformer": id_transformer,
-            "columns": MERCHANT_AND_USER_COLS,
-        }, f)
+        pickle.dump({"transformer": id_transformer, "columns": MERCHANT_AND_USER_COLS}, f)
 
-    # =========================================================================
     # Step 3: Split by year
-    # =========================================================================
     train_df = df[df[COL_YEAR] < train_year_cutoff].copy()
     val_df = df[df[COL_YEAR] == validation_year].copy()
     test_df = df[df[COL_YEAR] > validation_year].copy()
@@ -250,20 +238,12 @@ def preprocess_data_on_pvc(
 
     print(f"Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
 
-    # =========================================================================
     # Step 4: Fit feature transformers
-    # =========================================================================
     categorical_cols = ["Errors", "Use Chip"]
     numerical_cols = [COL_AMOUNT, COL_TIME]
 
-    # Determine one-hot vs binary encoding
-    one_hot_cols = []
-    binary_cols = []
-    for col in categorical_cols:
-        if train_df[col].nunique() <= one_hot_threshold:
-            one_hot_cols.append(col)
-        else:
-            binary_cols.append(col)
+    one_hot_cols = [c for c in categorical_cols if train_df[c].nunique() <= one_hot_threshold]
+    binary_cols = [c for c in categorical_cols if train_df[c].nunique() > one_hot_threshold]
 
     transformers = []
     if one_hot_cols:
@@ -277,15 +257,9 @@ def preprocess_data_on_pvc(
     feature_transformer.fit(train_df)
 
     with open(os.path.join(transformers_dir, "feature_transformer.pkl"), "wb") as f:
-        pickle.dump({
-            "transformer": feature_transformer,
-            "categorical_cols": categorical_cols,
-            "numerical_cols": numerical_cols,
-        }, f)
+        pickle.dump({"transformer": feature_transformer}, f)
 
-    # =========================================================================
     # Step 5: Prepare GNN data
-    # =========================================================================
     def prepare_gnn_split(data, split_name):
         split_dir = os.path.join(gnn_dir, f"{split_name}_gnn")
         edges_dir = os.path.join(split_dir, "edges")
@@ -293,54 +267,36 @@ def preprocess_data_on_pvc(
         os.makedirs(edges_dir, exist_ok=True)
         os.makedirs(nodes_dir, exist_ok=True)
 
-        # Create node ID mappings
         users = data[COL_CARD].unique()
         merchants = data[COL_MERCHANT].unique()
-
         user_to_id = {u: i for i, u in enumerate(sorted(users))}
         merchant_to_id = {m: i for i, m in enumerate(sorted(merchants))}
 
-        # Edge list
         edge_df = pd.DataFrame({
             "src": data[COL_CARD].map(user_to_id),
             "dst": data[COL_MERCHANT].map(merchant_to_id),
         })
         edge_df.to_csv(os.path.join(edges_dir, "user_to_merchant.csv"), index=False)
 
-        # Edge labels
         label_df = pd.DataFrame({COL_FRAUD: data[COL_FRAUD].values})
         label_df.to_csv(os.path.join(edges_dir, "user_to_merchant_label.csv"), index=False)
 
-        # Edge attributes (transformed features)
         edge_features = feature_transformer.transform(data)
-        edge_attr_df = pd.DataFrame(edge_features)
-        edge_attr_df.to_csv(os.path.join(edges_dir, "user_to_merchant_attr.csv"), index=False)
+        pd.DataFrame(edge_features).to_csv(os.path.join(edges_dir, "user_to_merchant_attr.csv"), index=False)
 
-        # User features (from ID transformer)
-        user_data = data[[COL_CARD, COL_MCC, COL_MERCHANT]].drop_duplicates(subset=[COL_CARD])
-        user_data = user_data.sort_values(by=COL_CARD)
-        user_features = id_transformer.transform(user_data[MERCHANT_AND_USER_COLS])
-        # Take only card-related columns for user features
-        user_feature_df = pd.DataFrame(user_features[:, -id_transformer.transformers_[2][1].base_n_encoder_.feature_names_out_.shape[0]:])
-        user_feature_df.to_csv(os.path.join(nodes_dir, "user.csv"), index=False)
+        # Simplified node features
+        user_data = data[[COL_CARD]].drop_duplicates().sort_values(by=COL_CARD)
+        pd.DataFrame({"id": range(len(user_data))}).to_csv(os.path.join(nodes_dir, "user.csv"), index=False)
 
-        # Merchant features
-        merchant_data = data[[COL_MERCHANT, COL_MCC, COL_CARD]].drop_duplicates(subset=[COL_MERCHANT])
-        merchant_data = merchant_data.sort_values(by=COL_MERCHANT)
-        merchant_features = id_transformer.transform(merchant_data[MERCHANT_AND_USER_COLS])
-        # Take merchant + MCC columns
-        n_merchant_cols = id_transformer.transformers_[0][1].base_n_encoder_.feature_names_out_.shape[0]
-        n_mcc_cols = id_transformer.transformers_[1][1].base_n_encoder_.feature_names_out_.shape[0]
-        merchant_feature_df = pd.DataFrame(merchant_features[:, :n_merchant_cols + n_mcc_cols])
-        merchant_feature_df.to_csv(os.path.join(nodes_dir, "merchant.csv"), index=False)
+        merchant_data = data[[COL_MERCHANT]].drop_duplicates().sort_values(by=COL_MERCHANT)
+        pd.DataFrame({"id": range(len(merchant_data))}).to_csv(os.path.join(nodes_dir, "merchant.csv"), index=False)
 
-        print(f"  {split_name}: {len(edge_df)} edges, {len(user_to_id)} users, {len(merchant_to_id)} merchants")
+        print(f"  {split_name}: {len(edge_df)} edges, {len(users)} users, {len(merchants)} merchants")
 
     print("Preparing GNN data...")
     prepare_gnn_split(train_df, "train")
     prepare_gnn_split(test_df, "test")
 
-    print(f"\nData saved to {data_mount_path}")
     return {
         "original_records": original_count,
         "final_records": final_count,
@@ -350,9 +306,7 @@ def preprocess_data_on_pvc(
     }
 
 
-@dsl.component(
-    base_image="python:3.12",
-)
+@dsl.component(base_image="python:3.12")
 def prepare_training_config_on_pvc(
     data_mount_path: str = "/data",
     gnn_hidden_channels: int = 32,
@@ -368,21 +322,12 @@ def prepare_training_config_on_pvc(
     xgb_num_boost_round: int = 512,
     xgb_gamma: float = 0.0,
 ):
-    """Write training config to PVC.
-
-    The NVIDIA training container expects:
-    - data_dir: /data/gnn (where GNN data lives)
-    - output_dir: /trained_models
-    - config at /app/config.json (we'll symlink)
-    """
+    """Write training config to PVC."""
     import json
     import os
 
     config = {
-        "paths": {
-            "data_dir": "/data/gnn",
-            "output_dir": "/trained_models"
-        },
+        "paths": {"data_dir": "/data/gnn", "output_dir": "/trained_models"},
         "models": [{
             "kind": "GNN_XGBoost",
             "gpu": "single",
@@ -410,20 +355,12 @@ def prepare_training_config_on_pvc(
     config_path = os.path.join(data_mount_path, "config.json")
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
-
     print(f"Config written to {config_path}")
-    print(json.dumps(config, indent=2))
 
 
 @dsl.container_component
 def run_nvidia_training_on_pvc():
-    """Run NVIDIA training container with data PVC mounted at /data.
-
-    Expects:
-    - /data/gnn/ - GNN preprocessed data
-    - /data/config.json - Training config
-    - /trained_models/ - Output PVC for model
-    """
+    """Run NVIDIA training container with PVCs mounted."""
     return dsl.ContainerSpec(
         image="nvcr.io/nvidia/cugraph/financial-fraud-training:2.0.0",
         command=["/bin/bash", "-c"],
@@ -431,26 +368,19 @@ def run_nvidia_training_on_pvc():
             "ln -sf /data/config.json /app/config.json && "
             "cat /app/config.json && "
             "echo '=== GNN Data ===' && ls -la /data/gnn/ && "
-            "echo '=== Starting Training ===' && "
             "cd /app && python main.py && "
             "echo '=== Training Complete ===' && ls -la /trained_models/"
         ],
     )
 
 
-@dsl.component(
-    base_image="python:3.12",
-    packages_to_install=["boto3==1.34.0"],
-)
+@dsl.component(base_image="python:3.12", packages_to_install=["boto3==1.34.0"])
 def upload_model_to_s3(
     model_mount_path: str = "/trained_models",
     s3_prefix: str = "model-repository",
     s3_region: str = "us-east-1",
 ) -> dict:
-    """Upload trained model from PVC to S3.
-
-    Reads MODEL_BUCKET from environment (ConfigMap).
-    """
+    """Upload trained model from PVC to S3."""
     import os
     import boto3
     from pathlib import Path
@@ -460,20 +390,17 @@ def upload_model_to_s3(
         raise ValueError("MODEL_BUCKET environment variable not set")
 
     s3 = boto3.client("s3", region_name=s3_region)
-
     model_repo = Path(model_mount_path) / "python_backend_model_repository"
     if not model_repo.exists():
         model_repo = Path(model_mount_path)
 
     uploaded = 0
     total_bytes = 0
-
     for root, dirs, files in os.walk(model_repo):
         for f in files:
             local_path = os.path.join(root, f)
             rel_path = os.path.relpath(local_path, model_repo)
             s3_key = f"{s3_prefix}/{rel_path}"
-
             size = os.path.getsize(local_path)
             print(f"Uploading {rel_path} ({size} bytes)")
             s3.upload_file(local_path, s3_bucket, s3_key)
@@ -482,7 +409,6 @@ def upload_model_to_s3(
 
     s3_uri = f"s3://{s3_bucket}/{s3_prefix}"
     print(f"\nUploaded {uploaded} files ({total_bytes} bytes) to {s3_uri}")
-
     return {"s3_uri": s3_uri, "files": uploaded, "bytes": total_bytes}
 
 
@@ -499,6 +425,7 @@ def upload_model_to_s3(
 def fraud_detection_e2e_pipeline(
     # S3 configuration
     s3_region: str = "us-east-1",
+    source_path: str = "data/TabFormer/raw/card_transaction.v1.csv",
     s3_model_prefix: str = "model-repository",
     # Preprocessing parameters
     under_sample: bool = True,
@@ -528,6 +455,8 @@ def fraud_detection_e2e_pipeline(
 ):
     """End-to-end fraud detection pipeline.
 
+    Default S3 source: s3://{S3_BUCKET}/data/TabFormer/raw/card_transaction.v1.csv
+
     Data flow:
     1. S3 -> Load raw TabFormer CSV to data PVC
     2. PVC -> Preprocess (clean, split, transform, prepare GNN)
@@ -535,14 +464,10 @@ def fraud_detection_e2e_pipeline(
     4. PVC -> Upload trained model to S3
 
     ConfigMap 'fraud-detection-config' must contain:
-    - s3_bucket: S3 bucket for raw data
-    - source_path: S3 key for raw CSV
-    - model_bucket: S3 bucket for model output
+    - s3_bucket: S3 bucket for raw data and model output
+    - model_bucket: S3 bucket for model output (can be same as s3_bucket)
     """
-    # =========================================================================
     # Create PVCs
-    # =========================================================================
-
     data_pvc = kubernetes.CreatePVC(
         pvc_name_suffix="-fraud-data",
         access_modes=["ReadWriteOnce"],
@@ -557,27 +482,21 @@ def fraud_detection_e2e_pipeline(
         storage_class_name=STORAGE_CLASS,
     )
 
-    # =========================================================================
     # Step 1: Load raw data from S3 to PVC
-    # =========================================================================
-
     load_task = load_raw_data_to_pvc(
         s3_region=s3_region,
+        source_path=source_path,
         data_mount_path="/data",
     )
     load_task.after(data_pvc)
-
     kubernetes.mount_pvc(load_task, pvc_name=data_pvc.outputs["name"], mount_path="/data")
     kubernetes.use_config_map_as_env(
         load_task,
         config_map_name=CONFIG_MAP,
-        config_map_key_to_env={"s3_bucket": "S3_BUCKET", "source_path": "SOURCE_PATH"},
+        config_map_key_to_env={"s3_bucket": "S3_BUCKET"},
     )
 
-    # =========================================================================
     # Step 2: Preprocess data on PVC
-    # =========================================================================
-
     preprocess_task = preprocess_data_on_pvc(
         data_mount_path="/data",
         under_sample=under_sample,
@@ -589,10 +508,7 @@ def fraud_detection_e2e_pipeline(
     preprocess_task.after(load_task)
     kubernetes.mount_pvc(preprocess_task, pvc_name=data_pvc.outputs["name"], mount_path="/data")
 
-    # =========================================================================
     # Step 3: Write training config to PVC
-    # =========================================================================
-
     config_task = prepare_training_config_on_pvc(
         data_mount_path="/data",
         gnn_hidden_channels=gnn_hidden_channels,
@@ -611,14 +527,10 @@ def fraud_detection_e2e_pipeline(
     config_task.after(preprocess_task)
     kubernetes.mount_pvc(config_task, pvc_name=data_pvc.outputs["name"], mount_path="/data")
 
-    # =========================================================================
     # Step 4: Train model (GPU)
-    # =========================================================================
-
     train_task = run_nvidia_training_on_pvc()
     train_task.after(config_task)
     train_task.after(model_pvc)
-
     kubernetes.mount_pvc(train_task, pvc_name=data_pvc.outputs["name"], mount_path="/data")
     kubernetes.mount_pvc(train_task, pvc_name=model_pvc.outputs["name"], mount_path="/trained_models")
 
@@ -628,17 +540,13 @@ def fraud_detection_e2e_pipeline(
     train_task.set_accelerator_type("nvidia.com/gpu")
     train_task.set_accelerator_limit(1)
 
-    # =========================================================================
     # Step 5: Upload model to S3
-    # =========================================================================
-
     upload_task = upload_model_to_s3(
         model_mount_path="/trained_models",
         s3_prefix=s3_model_prefix,
         s3_region=s3_region,
     )
     upload_task.after(train_task)
-
     kubernetes.mount_pvc(upload_task, pvc_name=model_pvc.outputs["name"], mount_path="/trained_models")
     kubernetes.use_config_map_as_env(
         upload_task,
@@ -646,17 +554,11 @@ def fraud_detection_e2e_pipeline(
         config_map_key_to_env={"model_bucket": "MODEL_BUCKET"},
     )
 
-    # =========================================================================
     # Step 6: Cleanup PVCs
-    # =========================================================================
-
     kubernetes.DeletePVC(pvc_name=data_pvc.outputs["name"]).after(upload_task)
     kubernetes.DeletePVC(pvc_name=model_pvc.outputs["name"]).after(upload_task)
 
-    # =========================================================================
     # Step 7: Optional smoke test
-    # =========================================================================
-
     with dsl.If(run_smoke_test == True):  # noqa: E712
         triton_host = f"{triton_service_name}.{triton_namespace}.svc.cluster.local"
         smoke_task = smoke_test_triton(
