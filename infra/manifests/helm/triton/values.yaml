@@ -27,8 +27,9 @@
 replicaCount: 1
 
 image:
-  # PyTorch + Python backend image with CUDA 13 support
-  imageName: nvcr.io/nvidia/tritonserver:25.11-pyt-python-py3
+  # Full Triton image with all backends and frameworks (PyTorch, TensorFlow, etc.)
+  # Required for Python backend models that import torch directly
+  imageName: nvcr.io/nvidia/tritonserver:25.11-py3
   pullPolicy: IfNotPresent
   modelRepositoryPath: s3://triton-inference-server-repository/model-repository
   numGpus: 1
