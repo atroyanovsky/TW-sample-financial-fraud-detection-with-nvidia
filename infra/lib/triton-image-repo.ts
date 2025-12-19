@@ -2,21 +2,47 @@ import * as cdk from "aws-cdk-lib";
 import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as codebuild from "aws-cdk-lib/aws-codebuild";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as cr from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
 
-export interface TritonImageRepoStackProps extends cdk.StackProps {}
+export interface TritonImageRepoStackProps extends cdk.StackProps {
+  /**
+   * GitHub repository URL for the source code
+   * @default "https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia"
+   */
+  repoUrl?: string;
+
+  /**
+   * Branch to build from
+   * @default "main"
+   */
+  branch?: string;
+
+  /**
+   * Whether to trigger a build on stack deployment
+   * @default true
+   */
+  triggerBuildOnDeploy?: boolean;
+}
 
 export class TritonImageRepoStack extends cdk.Stack {
   public readonly repository: ecr.Repository;
   public readonly repositoryUri: string;
+  public readonly buildProject: codebuild.Project;
 
   constructor(scope: Construct, id: string, props?: TritonImageRepoStackProps) {
     super(scope, id, props);
+
+    const repoUrl = props?.repoUrl ?? "https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia";
+    const branch = props?.branch ?? "v2";
+    const triggerBuildOnDeploy = props?.triggerBuildOnDeploy ?? true;
 
     // ECR Repository for custom Triton image
     this.repository = new ecr.Repository(this, "TritonInferenceRepo", {
       repositoryName: "triton-inference-server",
       removalPolicy: cdk.RemovalPolicy.DESTROY,
+      emptyOnDelete: true,
       lifecycleRules: [
         {
           maxImageCount: 5,
@@ -27,13 +53,25 @@ export class TritonImageRepoStack extends cdk.Stack {
 
     this.repositoryUri = this.repository.repositoryUri;
 
-    // CodeBuild project to build the custom Triton image
-    const buildProject = new codebuild.Project(this, "TritonImageBuild", {
+    // CodeBuild project with GitHub source
+    this.buildProject = new codebuild.Project(this, "TritonImageBuild", {
       projectName: "triton-inference-image-build",
       description: "Builds custom Triton image with PyTorch, PyG, XGBoost, Captum",
+      source: codebuild.Source.gitHub({
+        owner: this.extractGitHubOwner(repoUrl),
+        repo: this.extractGitHubRepo(repoUrl),
+        branchOrRef: branch,
+        webhook: true,
+        webhookFilters: [
+          codebuild.FilterGroup
+            .inEventOf(codebuild.EventAction.PUSH)
+            .andBranchIs(branch)
+            .andFilePathIs("triton/.*"),
+        ],
+      }),
       environment: {
         buildImage: codebuild.LinuxBuildImage.STANDARD_7_0,
-        privileged: true, // Required for Docker builds
+        privileged: true,
         computeType: codebuild.ComputeType.LARGE,
       },
       environmentVariables: {
@@ -48,38 +86,92 @@ export class TritonImageRepoStack extends cdk.Stack {
             commands: [
               "echo Logging in to Amazon ECR...",
               "aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com",
+              "export COMMIT_HASH=${CODEBUILD_RESOLVED_SOURCE_VERSION:-latest}",
+              "export IMAGE_TAG=${COMMIT_HASH:0:8}",
             ],
           },
           build: {
             commands: [
               "echo Building Triton image...",
               "cd triton",
-              "docker build -t $ECR_REPO_URI:latest -t $ECR_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION .",
+              "docker build -t $ECR_REPO_URI:latest -t $ECR_REPO_URI:$IMAGE_TAG .",
             ],
           },
           post_build: {
             commands: [
               "echo Pushing to ECR...",
               "docker push $ECR_REPO_URI:latest",
-              "docker push $ECR_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION",
+              "docker push $ECR_REPO_URI:$IMAGE_TAG",
               "echo Build completed on `date`",
+              "echo Image URI: $ECR_REPO_URI:latest",
             ],
           },
         },
       }),
       timeout: cdk.Duration.hours(2),
+      badge: true,
     });
 
     // Grant CodeBuild permission to push to ECR
-    this.repository.grantPullPush(buildProject);
+    this.repository.grantPullPush(this.buildProject);
 
     // Grant CodeBuild permission to login to ECR
-    buildProject.addToRolePolicy(
+    this.buildProject.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["ecr:GetAuthorizationToken"],
         resources: ["*"],
       })
     );
+
+    // Trigger build on deploy using Custom Resource
+    if (triggerBuildOnDeploy) {
+      const triggerBuildFn = new lambda.Function(this, "TriggerBuildFunction", {
+        runtime: lambda.Runtime.PYTHON_3_12,
+        handler: "index.handler",
+        timeout: cdk.Duration.minutes(1),
+        code: lambda.Code.fromInline(`
+import boto3
+import cfnresponse
+
+def handler(event, context):
+    if event['RequestType'] == 'Delete':
+        cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+        return
+
+    try:
+        codebuild = boto3.client('codebuild')
+        project_name = event['ResourceProperties']['ProjectName']
+
+        response = codebuild.start_build(projectName=project_name)
+        build_id = response['build']['id']
+
+        cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+            'BuildId': build_id
+        })
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        cfnresponse.send(event, context, cfnresponse.FAILED, {
+            'Error': str(e)
+        })
+`),
+      });
+
+      triggerBuildFn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ["codebuild:StartBuild"],
+          resources: [this.buildProject.projectArn],
+        })
+      );
+
+      new cdk.CustomResource(this, "TriggerInitialBuild", {
+        serviceToken: triggerBuildFn.functionArn,
+        properties: {
+          ProjectName: this.buildProject.projectName,
+          // Change this to force a rebuild on redeploy
+          BuildTrigger: Date.now().toString(),
+        },
+      });
+    }
 
     // Outputs
     new cdk.CfnOutput(this, "TritonImageRepo", {
@@ -98,7 +190,23 @@ export class TritonImageRepoStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, "TritonBuildProject", {
-      value: buildProject.projectName,
+      value: this.buildProject.projectName,
     });
+
+    new cdk.CfnOutput(this, "TritonBuildProjectArn", {
+      value: this.buildProject.projectArn,
+    });
+  }
+
+  private extractGitHubOwner(url: string): string {
+    // https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia
+    const match = url.match(/github\.com\/([^\/]+)/);
+    return match ? match[1] : "aws-samples";
+  }
+
+  private extractGitHubRepo(url: string): string {
+    // https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia
+    const match = url.match(/github\.com\/[^\/]+\/([^\/]+)/);
+    return match ? match[1].replace(".git", "") : "sample-financial-fraud-detection-with-nvidia";
   }
 }
