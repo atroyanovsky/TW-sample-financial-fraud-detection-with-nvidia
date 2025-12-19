@@ -1,9 +1,6 @@
 import * as cdk from "aws-cdk-lib";
-import { AwsSolutionsChecks } from "cdk-nag";
 import { NvidiaFraudDetectionBlueprint } from "../lib/nvidia-fraud-detection-blueprint";
 import { TarExtractorStack } from "../lib/tar-extractor-stack";
-import { SageMakerExecutionRoleStack } from "../lib/sagemaker-training-role";
-import { SageMakerNotebookRoleStack } from "../lib/sagemaker-notebook-role";
 import { BlueprintECRStack } from "../lib/training-image-repo";
 import { TritonImageRepoStack } from "../lib/triton-image-repo";
 
@@ -25,25 +22,6 @@ const tarExtractorStack = new TarExtractorStack(
   {
     env: env,
     modelBucketName: modelBucketName,
-  },
-);
-
-const sagemakerExecutionRole = new SageMakerExecutionRoleStack(
-  app,
-  "NvidiaFraudDetectionTrainingRole",
-  {
-    env: env,
-    modelBucketArn: "arn:aws:s3:::" + modelBucketName,
-  },
-);
-
-const sagemakerNotebookRole = new SageMakerNotebookRoleStack(
-  app,
-  "NvidiaFraudDetectionNotebookRole",
-  {
-    env: env,
-    modelBucketArn: "arn:aws:s3:::" + modelBucketName,
-    modelRegistryBucketArn: "arn:aws:s3:::" + modelRegistryBucketName,
   },
 );
 
@@ -76,6 +54,4 @@ const mainStack = new NvidiaFraudDetectionBlueprint(
 
 mainStack.addDependency(trainingImageRepo);
 mainStack.addDependency(tritonImageRepo);
-mainStack.addDependency(sagemakerExecutionRole);
-mainStack.addDependency(sagemakerNotebookRole);
 mainStack.addDependency(tarExtractorStack);

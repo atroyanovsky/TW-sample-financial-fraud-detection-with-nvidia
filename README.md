@@ -1,188 +1,145 @@
-# Getting Started - AWS Edition
+# NVIDIA Financial Fraud Detection Blueprint - AWS Edition
 
 ## Overview
 
-This NVIDIA Financial Fraud Detection AI Blueprint along with the AWS Deployment guide provides a reference example to deploy an end-to-end blueprint using Graph Neural Networks (GNNs) for higher accuracy and reduced false positives. We leverage Amazon SageMaker for training the fraud detection model and Amazon EKS (Elastic Kubernetes Service) with NVIDIA Triton Inference Server for hosting and serving the trained model.
+This NVIDIA Financial Fraud Detection AI Blueprint provides a reference implementation for deploying an end-to-end fraud detection system using Graph Neural Networks (GNNs) on AWS. The solution leverages Kubeflow Pipelines on Amazon EKS for ML workflow orchestration and NVIDIA Triton Inference Server for high-performance model serving.
 
-This is the general architecture diagram for how we host the blueprint on AWS.
+![Architecture diagram](./docs/arch-diagram.png)
 
-![Architecture diagram showing the end-to-end AWS deployment workflow: A
-Sagemaker development environment connects to S3 for data storage and
-preprocessing. The workflow shows data moving from Sagemaker to S3, then to a
-Sagemaker Training job. The trained model is stored in S3 and loaded into an
-EKS cluster running Nvidia Triton for model inference. The diagram illustrates
-the complete pipeline from development to production deployment.](./docs/arch-diagram.png)
+### Architecture
 
-1. We will host our development environment inside SageMaker as it permits us to
-   offload long lived compute to the cloud without having to keep our system up.
-2. The notebook then does the data preprocessing for our model, splits it into
-   training and testing sets, and uploads the data sets into S3.
-3. The notebook kicks off a Sagemaker AI training job with pointers to our data
-   and configuration, this then fully replicates our data, and executes the
-   training job.
-4. The trained model is output into S3, and that kicks off the model reload
-   process in our inference instance.
-5. The model is taken from S3 and loaded into the EKS cluster so that it's
-   ready to go into production.
-6. For inference, we deploy Nvidia Triton on an EKS cluster with GPU-enabled nodes
-   (g4dn instances) that reads the model from S3 and serves it through a load-balanced
-   endpoint.
+1. **Kubeflow Pipelines** orchestrates the entire ML workflow on EKS, from data preprocessing to model deployment
+2. **RAPIDS/cuDF** performs GPU-accelerated data preprocessing on the TabFormer dataset
+3. **NVIDIA Training Container** trains a GNN+XGBoost ensemble model for fraud detection
+4. **S3** stores raw data, processed datasets, and trained models
+5. **NVIDIA Triton Inference Server** serves the trained model on GPU-enabled EKS nodes
+6. **ArgoCD** manages GitOps-based deployments for infrastructure and model updates
 
 ## Prerequisites
 
-To successfully deploy this blueprint, you will need:
+1. **AWS Account** with permissions to create EKS, EC2, ECR, and S3 resources
+2. **Local tools**: Docker, Node.js 20+, AWS CLI, kubectl
+3. **~30GB storage** for container images
 
-1. **AWS Account** - with appropriate permissions to create SageMaker, EKS, EC2,
-and ECR resources
+## Quick Start
 
-2. **Nvidia NGC API Key** - required to access Nvidia's container registry and models
-
-- Please refer to the [Nvidia NGC
-    documentation](https://docs.nvidia.com/ngc/ngc-overview/index.html#generating-api-key)
-    for instructions on obtaining your API key
-
-3. **Local machine** - with Docker installed and approximately 30GB of available storage space
-
-4. **Git** - for cloning the repository
-
-## Setup Instructions
-
-### Set up SageMaker Studio
-
-1. Navigate to the AWS SageMaker console
-2. Create a new SageMaker domain if you don't have one already
-3. Create a new user profile or use an existing one
-4. Launch SageMaker Studio
-5. Create a new notebook instance with at least `ml.g4dn.4xlarge` instance type
-   and 50GB of storage
-
-### Deploy Infrastructure with AWS CDK
-
-From your local machine with Node.js and AWS CDK installed:
-
-1. Clone this repository
-
-```sh
-git clone https://github.com/aws-samples/financial-fraud-detection-with-nvidia
-cd financial-fraud-detection-with-nvidia/infra
-```
-
-2. Configure your AWS credentials and install dependencies:
+### 1. Deploy Infrastructure
 
 ```bash
-aws configure
+cd infra
 npm install
-```
 
-3. Bootstrap CDK (First time only):
-
-```bash
+# Bootstrap CDK (first time only)
 npx cdk bootstrap aws://<ACCOUNT>/<REGION>
-```
 
-4. Configure environment variables:
-
-```bash
-# AWS Configuration
+# Set environment
 export CDK_DEFAULT_ACCOUNT=<your-account>
 export CDK_DEFAULT_REGION=<your-region>
 
-# Optional: Training output bucket configuration (defaults to "ml-on-containers")
-export MODEL_BUCKET_NAME=your-custom-bucket-name
-```
-
-5. Deploy the stack:
-
-```bash
+# Deploy all stacks
 npx cdk deploy --all
-
-# You can also pass in your bucket name as a command line argument during deployment
-npx cdk deploy --all --context modelBucketName=your-custom-bucket-name
 ```
 
-This will:
+This creates:
+- EKS cluster with GPU node pools (Karpenter-managed)
+- Kubeflow Pipelines for ML orchestration
+- ArgoCD for GitOps deployments
+- ECR repositories for training and inference images
+- S3 buckets for data and models
 
-- Create a new VPC with public and private subnets
-- Deploy an EKS cluster with GPU-enabled node groups
-- Install the NVIDIA GPU Operator
-- Configure ArgoCD for GitOps-based deployments
-- Set up AWS Load Balancer Controller
-- Configure IAM roles and security groups
+### 2. Build Custom Triton Image
 
-You can monitor the deployment progress in the AWS Console under CloudFormation.
-
-### Upload the NVIDIA Training Image to ECR
-
-Login to the NVIDIA Docker Registry and pull the image:
+The fraud detection model requires PyTorch, PyTorch Geometric, XGBoost, and Captum. Trigger the CodeBuild project:
 
 ```bash
-export NGC_API_KEY=<your-api-key>
-docker login nvcr.io --username '$oauthtoken' --password $NGC_API_KEY
+# Get the CodeBuild project name
+aws cloudformation describe-stacks \
+  --stack-name NvidiaFraudDetectionTritonImageRepo \
+  --query "Stacks[0].Outputs[?OutputKey=='TritonBuildProject'].OutputValue" \
+  --output text
 
+# Start the build
+aws codebuild start-build --project-name triton-inference-image-build
+```
+
+### 3. Upload Training Image to ECR
+
+```bash
+# Pull NVIDIA training image
 docker pull nvcr.io/nvidia/cugraph/financial-fraud-training:2.0.0
-```
 
-Get the ECR URI from the cloudformation stack:
-
-```bash
-export NVIDIA_ECR_URI=$(aws cloudformation describe-stacks \
+# Get ECR URI
+export TRAINING_ECR=$(aws cloudformation describe-stacks \
   --stack-name NvidiaFraudDetectionTrainingImageRepo \
   --query "Stacks[0].Outputs[?OutputKey=='TrainingImageRepoUri'].OutputValue" \
   --output text)
+
+# Login and push
+aws ecr get-login-password | docker login --username AWS --password-stdin ${TRAINING_ECR%%/*}
+docker tag nvcr.io/nvidia/cugraph/financial-fraud-training:2.0.0 $TRAINING_ECR:latest
+docker push $TRAINING_ECR:latest
 ```
 
-Login to ECR:
+### 4. Access Kubeflow Dashboard
 
 ```bash
+# Update kubeconfig
+aws eks update-kubeconfig --region <region> --name nvidia-fraud-detection-cluster-blueprint
 
-export ECR_REPO=$(echo "${NVIDIA_ECR_URI%%/*}")
-aws ecr get-login-password --region <your-aws-region> | docker login --username AWS --password-stdin $ECR_REPO
+# Port-forward to Kubeflow UI
+kubectl port-forward -n kubeflow svc/ml-pipeline-ui 8080:80
 ```
 
-Tag the NVIDIA Image and push it to ECR:
+Open http://localhost:8080 to access the Kubeflow Pipelines UI.
+
+### 5. Run the Pipeline
+
+Use the Jupyter notebook in `notebooks/kubeflow-fraud-detection.ipynb` from a Kubeflow Notebook Server, or submit the compiled pipeline:
 
 ```bash
-
-docker tag nvcr.io/nvidia/cugraph/financial-fraud-training:2.0.0 $NVIDIA_ECR_URI:latest
-docker push $NVIDIA_ECR_URI:latest
+cd workflows
+pip install kfp==2.10.1
+python -m workflows.cudf_e2e_pipeline  # Compiles to YAML
+# Upload fraud_detection_cudf_pipeline.yaml via Kubeflow UI
 ```
 
-### Set up Development Environment in SageMaker Studio
+The pipeline:
+1. Downloads TabFormer data from S3
+2. Runs GPU-accelerated preprocessing with RAPIDS/cuDF
+3. Trains GNN+XGBoost model
+4. Uploads model to S3
+5. Triton automatically loads the new model
 
-From within your SageMaker Studio environment:
+## Project Structure
 
-1. Clone the repository
-
-```sh
-git clone https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia.git
+```
+├── infra/                    # AWS CDK infrastructure
+│   ├── lib/                  # CDK stack definitions
+│   └── manifests/            # Helm charts and ArgoCD apps
+├── notebooks/                # Kubeflow notebook for interactive development
+├── workflows/                # Kubeflow Pipeline definitions
+│   └── src/workflows/        # Pipeline components
+├── triton/                   # Custom Triton Dockerfile
+├── src/                      # Data preprocessing scripts
+└── data/                     # Sample data and documentation
 ```
 
-2. Set up the required conda environment from a terminal within the JupyterLab environment
+## Documentation
 
-```sh
-conda env create -f ./sample-financial-fraud-detection-with-nvidia/conda/notebook_env.yaml
-conda install -y ipykernel -n fraud_blueprint_env
-conda init
-conda activate fraud_blueprint_env
-python -m ipykernel install --user --name fraud_blueprint_env --display-name "user_env:(fraud_blueprint_env)"
+- [Kubeflow Complete Guide](./Kubeflow_Complete_Guide.md) - Deep dive into Kubeflow Pipelines
+- [Infrastructure Overview](./infra/README.md) - CDK stack details
+- [Pipeline Components](./docs/roadmap/03-pipeline-components.md) - Component documentation
+
+## Cleanup
+
+```bash
+# Delete CloudFormation stacks
+cd infra
+npx cdk destroy --all
+
+# Or delete specific stacks
+aws cloudformation delete-stack --stack-name NvidiaFraudDetectionBlueprint
 ```
-
-3. Open the notebook and follow the instructions
-   - Navigate to the `notebooks` directory and open the main notebook
-   - The notebook will guide you through the process of data preparation, model
-     training, and deployment
-
-### Running the Solution
-
-Follow the step-by-step instructions in the notebook to:
-
-1. Preprocess the financial transaction data
-2. Train the fraud detection model using the Nvidia container on SageMaker
-3. Deploy the trained model to Triton Inference Server on EKS
-4. Configure the ArgoCD deployment for automated model updates
-
-For detailed troubleshooting and additional configuration options, refer to the
-documentation in the `docs` directory.
 
 ## Security
 
