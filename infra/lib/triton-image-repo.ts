@@ -3,7 +3,6 @@ import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as codebuild from "aws-cdk-lib/aws-codebuild";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import * as cr from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
 
 export interface TritonImageRepoStackProps extends cdk.StackProps {
@@ -15,7 +14,7 @@ export interface TritonImageRepoStackProps extends cdk.StackProps {
 
   /**
    * Branch to build from
-   * @default "main"
+   * @default "v2"
    */
   branch?: string;
 
@@ -53,21 +52,40 @@ export class TritonImageRepoStack extends cdk.Stack {
 
     this.repositoryUri = this.repository.repositoryUri;
 
-    // CodeBuild project with GitHub source
+    // CodeBuild project - no source, clones repo in buildspec
     this.buildProject = new codebuild.Project(this, "TritonImageBuild", {
       projectName: "triton-inference-image-build",
       description: "Builds custom Triton image with PyTorch, PyG, XGBoost, Captum",
-      source: codebuild.Source.gitHub({
-        owner: this.extractGitHubOwner(repoUrl),
-        repo: this.extractGitHubRepo(repoUrl),
-        branchOrRef: branch,
-        webhook: true,
-        webhookFilters: [
-          codebuild.FilterGroup
-            .inEventOf(codebuild.EventAction.PUSH)
-            .andBranchIs(branch)
-            .andFilePathIs("triton/.*"),
-        ],
+      buildSpec: codebuild.BuildSpec.fromObject({
+        version: "0.2",
+        phases: {
+          pre_build: {
+            commands: [
+              "echo Logging in to Amazon ECR...",
+              "aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com",
+              "echo Cloning repository...",
+              "git clone --depth 1 --branch $GIT_BRANCH $GIT_REPO_URL repo",
+              "export COMMIT_HASH=$(cd repo && git rev-parse --short HEAD)",
+              "echo Commit: $COMMIT_HASH",
+            ],
+          },
+          build: {
+            commands: [
+              "echo Building Triton image...",
+              "cd repo/triton",
+              "docker build -t $ECR_REPO_URI:latest -t $ECR_REPO_URI:$COMMIT_HASH .",
+            ],
+          },
+          post_build: {
+            commands: [
+              "echo Pushing to ECR...",
+              "docker push $ECR_REPO_URI:latest",
+              "docker push $ECR_REPO_URI:$COMMIT_HASH",
+              "echo Build completed on `date`",
+              "echo Image URI: $ECR_REPO_URI:latest",
+            ],
+          },
+        },
       }),
       environment: {
         buildImage: codebuild.LinuxBuildImage.STANDARD_7_0,
@@ -78,38 +96,11 @@ export class TritonImageRepoStack extends cdk.Stack {
         ECR_REPO_URI: { value: this.repository.repositoryUri },
         AWS_ACCOUNT_ID: { value: this.account },
         AWS_REGION: { value: this.region },
+        GIT_REPO_URL: { value: repoUrl },
+        GIT_BRANCH: { value: branch },
+        COMMIT_HASH: { value: "latest" },
       },
-      buildSpec: codebuild.BuildSpec.fromObject({
-        version: "0.2",
-        phases: {
-          pre_build: {
-            commands: [
-              "echo Logging in to Amazon ECR...",
-              "aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com",
-              "export COMMIT_HASH=${CODEBUILD_RESOLVED_SOURCE_VERSION:-latest}",
-              "export IMAGE_TAG=${COMMIT_HASH:0:8}",
-            ],
-          },
-          build: {
-            commands: [
-              "echo Building Triton image...",
-              "cd triton",
-              "docker build -t $ECR_REPO_URI:latest -t $ECR_REPO_URI:$IMAGE_TAG .",
-            ],
-          },
-          post_build: {
-            commands: [
-              "echo Pushing to ECR...",
-              "docker push $ECR_REPO_URI:latest",
-              "docker push $ECR_REPO_URI:$IMAGE_TAG",
-              "echo Build completed on `date`",
-              "echo Image URI: $ECR_REPO_URI:latest",
-            ],
-          },
-        },
-      }),
       timeout: cdk.Duration.hours(2),
-      badge: true,
     });
 
     // Grant CodeBuild permission to push to ECR
@@ -196,17 +187,5 @@ def handler(event, context):
     new cdk.CfnOutput(this, "TritonBuildProjectArn", {
       value: this.buildProject.projectArn,
     });
-  }
-
-  private extractGitHubOwner(url: string): string {
-    // https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia
-    const match = url.match(/github\.com\/([^\/]+)/);
-    return match ? match[1] : "aws-samples";
-  }
-
-  private extractGitHubRepo(url: string): string {
-    // https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia
-    const match = url.match(/github\.com\/[^\/]+\/([^\/]+)/);
-    return match ? match[1].replace(".git", "") : "sample-financial-fraud-detection-with-nvidia";
   }
 }
