@@ -6,7 +6,7 @@ serviceAccount:
   name: triton-sa
 
 image:
-  imageName: nvcr.io/nvidia/tritonserver:25.05-py3
+  imageName: nvcr.io/nvidia/tritonserver:25.11-py3
   pullPolicy: IfNotPresent
   numGpus: 1
 

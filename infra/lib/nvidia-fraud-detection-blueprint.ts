@@ -26,6 +26,11 @@ export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
    * The S3 bucket name for model registry (Triton model repository)
    */
   modelRegistryBucketName: string;
+
+  /**
+   * The Triton inference server image URI (from ECR)
+   */
+  tritonImageUri: string;
 }
 
 export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
@@ -201,7 +206,10 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
           targetRevision: "v2",
           account: this.account,
           region: this.region,
-          bucketName: props.modelBucketName
+          bucketName: props.modelBucketName,
+          image: {
+            imageName: props.tritonImageUri
+          }
         },
         values: argoCdValues
       }),

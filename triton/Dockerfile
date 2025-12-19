@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/tritonserver:25.04-py3
+FROM nvcr.io/nvidia/tritonserver:25.11-py3
 
 WORKDIR /opt
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import * as cdk from "aws-cdk-lib";
 import { AwsSolutionsChecks } from "cdk-nag";
 import { NvidiaFraudDetectionBlueprint } from "../lib/nvidia-fraud-detection-blueprint";
@@ -6,6 +5,7 @@ import { TarExtractorStack } from "../lib/tar-extractor-stack";
 import { SageMakerExecutionRoleStack } from "../lib/sagemaker-training-role";
 import { SageMakerNotebookRoleStack } from "../lib/sagemaker-notebook-role";
 import { BlueprintECRStack } from "../lib/training-image-repo";
+import { TritonImageRepoStack } from "../lib/triton-image-repo";
 
 const app = new cdk.App();
 
@@ -15,7 +15,7 @@ const env = {
 };
 
 const modelBucketName = "ml-on-containers-" + process.env.CDK_DEFAULT_ACCOUNT;
-const kfBucketName = "kubeflow-pipelines" + process.env.CDK_DEFAULT_ACCOUNT;
+const kfBucketName = "kubeflow-pipelines-" + process.env.CDK_DEFAULT_ACCOUNT;
 const dataBucketName = modelBucketName;
 const modelRegistryBucketName = modelBucketName + "-model-registry";
 
@@ -55,6 +55,12 @@ const trainingImageRepo = new BlueprintECRStack(
   },
 );
 
+const tritonImageRepo = new TritonImageRepoStack(
+  app,
+  "NvidiaFraudDetectionTritonImageRepo",
+  { env: env },
+);
+
 const mainStack = new NvidiaFraudDetectionBlueprint(
   app,
   "NvidiaFraudDetectionBlueprint",
@@ -64,10 +70,12 @@ const mainStack = new NvidiaFraudDetectionBlueprint(
     kubeflowBucketName: kfBucketName,
     dataBucketName: dataBucketName,
     modelRegistryBucketName: modelRegistryBucketName,
+    tritonImageUri: `${tritonImageRepo.repositoryUri}:latest`,
   },
 );
 
 mainStack.addDependency(trainingImageRepo);
+mainStack.addDependency(tritonImageRepo);
 mainStack.addDependency(sagemakerExecutionRole);
 mainStack.addDependency(sagemakerNotebookRole);
 mainStack.addDependency(tarExtractorStack);
