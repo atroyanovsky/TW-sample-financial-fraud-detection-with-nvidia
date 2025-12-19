@@ -67,14 +67,13 @@ import cudf
 import numpy as np
 import pandas as pd
 import scipy.stats as ss
-from scipy.linalg import block_diag
 from category_encoders import BinaryEncoder
+from scipy.linalg import block_diag
 from scipy.stats import pointbiserialr
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, RobustScaler
-
 
 COL_USER = "User"
 COL_CARD = "Card"
@@ -149,7 +148,6 @@ def create_feature_mask(columns):
 
 
 def preprocess_data(tabformer_base_path):
-
     # Whether we should under-sample majority class (i.e. non-fraud transactions)
     under_sample = True
 
@@ -241,7 +239,9 @@ def preprocess_data(tabformer_base_path):
     max_nr_cards_per_user = len(data[COL_CARD].unique())
 
     # Combine User and Card to generate unique numbers
-    data[COL_CARD] = (data[COL_USER] * len(data[COL_CARD].unique()) + data[COL_CARD]).astype("int")
+    data[COL_CARD] = (
+        data[COL_USER] * len(data[COL_CARD].unique()) + data[COL_CARD]
+    ).astype("int")
 
     # Collect unique merchant, card and MCC in a dataframe and fit a binary transformer
     data = data.to_pandas()
@@ -792,7 +792,9 @@ def preprocess_data(tabformer_base_path):
 
     # Write NUM_TRANSACTION_NODES in info.json file
     with open(
-        os.path.join(tabformer_gnn, "nodes/offset_range_of_training_node.json"), "w", encoding="utf-8"
+        os.path.join(tabformer_gnn, "nodes/offset_range_of_training_node.json"),
+        "w",
+        encoding="utf-8",
     ) as json_file:
         json.dump(
             {"start": int(NR_USERS + NR_MXS), "end": int(NR_USERS + NR_MXS + NR_TXS)},

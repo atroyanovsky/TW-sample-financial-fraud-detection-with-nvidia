@@ -84,8 +84,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
         { key: "karpenter.sh/capacity-type", operator: "In", values: ["on-demand"] },
         {
           key: "node.kubernetes.io/instance-type", operator: "In", values: [
-            "g4dn.xlarge",    // 1 GPU, 4 vCPUs, 16 GB
-            "g4dn.2xlarge",   // 1 GPU, 8 vCPUs, 32 GB
+            "g4dn.2xlarge",   // 1 GPU, 8 vCPUs, 32 GB - minimum for 24M row cuDF
           ],
         },
         { key: "kubernetes.io/arch", operator: "In", values: ["amd64"] },
@@ -150,7 +149,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
             {
               deviceName: "/dev/xvda",
               ebs: {
-                volumeSize: "50Gi",
+                volumeSize: "200Gi",
                 deleteOnTermination: true
               }
             }

@@ -206,7 +206,8 @@ def preprocess_data(tabformer_base_path):
     # * Look into spread of Amount and choose right scaler for it
 
     # Drop the "$" from the Amount field and then convert from string to float
-    data[COL_AMOUNT] = data[COL_AMOUNT].str.replace("$", "").astype("float")
+    # cuDF requires regex=False for literal string replacement
+    data[COL_AMOUNT] = data[COL_AMOUNT].str.replace("$", "", regex=False).astype("float")
 
     # #### Change the 'Fraud' values to be integer where
     #   * 1 == Fraud
@@ -1132,3 +1133,15 @@ def plot_bipartite_subgraph_namespaced(G_sub: nx.Graph, info: dict, A_map: dict)
     plt.title("A subgraph with a few user and merchant nodes.")
     plt.axis("off")
     plt.show()
+
+
+import sys
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print(f"Usage: {sys.argv[0]} <data_path>")
+        print("  data_path: Directory containing raw/card_transaction.v1.csv")
+        sys.exit(1)
+    
+    preprocess_data(sys.argv[1])
+
