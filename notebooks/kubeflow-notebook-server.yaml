@@ -1,0 +1,44 @@
+apiVersion: kubeflow.org/v1
+kind: Notebook
+metadata:
+  name: fraud-detection-demo
+  namespace: team-1
+  labels:
+    app: fraud-detection-demo
+spec:
+  template:
+    spec:
+      serviceAccountName: default-editor
+      containers:
+      - name: notebook
+        image: kubeflownotebookswg/jupyter-pytorch-cuda:v1.9.2
+        resources:
+          requests:
+            cpu: "1"
+            memory: "4Gi"
+          limits:
+            cpu: "2"
+            memory: "8Gi"
+        env:
+        - name: NB_PREFIX
+          value: /notebook/team-1/fraud-detection-demo
+        volumeMounts:
+        - name: workspace
+          mountPath: /home/jovyan
+      volumes:
+      - name: workspace
+        persistentVolumeClaim:
+          claimName: fraud-detection-demo-workspace
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fraud-detection-demo-workspace
+  namespace: team-1
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 50Gi

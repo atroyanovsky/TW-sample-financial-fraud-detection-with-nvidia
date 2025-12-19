@@ -30,18 +30,19 @@ TRAINING_IMAGE = "915948456033.dkr.ecr.us-west-2.amazonaws.com/nvidia-training-r
 
 @dsl.component(
     base_image="python:3.11",
-    packages_to_install=["boto3", "botocore", "s3transfer", "jmespath", "python-dateutil", "urllib3", "six"],
+    packages_to_install=["boto3", "botocore", "s3transfer", "jmespath", "python-dateutil", "urllib3", "six", "requests"],
 )
 def download_raw_data_to_pvc(
     s3_bucket: str,
     s3_region: str,
     raw_data_path: str,
-    script_path: str,
+    script_url: str,
     data_mount_path: str = "/data",
 ):
-    """Download raw CSV and preprocessing script from S3 to PVC."""
+    """Download raw CSV from S3 and preprocessing script from GitHub to PVC."""
     import os
     import boto3
+    import requests
 
     s3 = boto3.client("s3", region_name=s3_region)
 
@@ -58,12 +59,15 @@ def download_raw_data_to_pvc(
     os.chmod(raw_dir, 0o777)
     os.chmod(local_csv, 0o666)
 
-    # Download preprocessing script
+    # Download preprocessing script from GitHub
     local_script = os.path.join(data_mount_path, "preprocess_tabformer.py")
-    print(f"Downloading s3://{s3_bucket}/{script_path} to {local_script}")
-    s3.download_file(s3_bucket, script_path, local_script)
+    print(f"Downloading {script_url} to {local_script}")
+    resp = requests.get(script_url)
+    resp.raise_for_status()
+    with open(local_script, "w") as f:
+        f.write(resp.text)
     os.chmod(local_script, 0o755)
-    print(f"Downloaded preprocessing script")
+    print(f"Downloaded preprocessing script ({len(resp.text)} bytes)")
 
 
 @dsl.container_component
@@ -214,7 +218,7 @@ def fraud_detection_cudf_pipeline(
     model_bucket: str = "ml-on-containers-915948456033-model-registry",
     s3_region: str = "us-west-2",
     raw_data_path: str = "data/TabFormer/raw/card_transaction.v1.csv",
-    script_path: str = "scripts/preprocess_tabformer.py",
+    script_url: str = "https://raw.githubusercontent.com/aws-samples/amazon-eks-machine-learning-with-terraform-and-kubeflow/main/examples/fraud-detection/workflows/src/workflows/components/preprocess_tabformer.py",
     s3_model_prefix: str = "model-repository",
     # GNN hyperparameters
     gnn_hidden_channels: int = 32,
@@ -235,7 +239,7 @@ def fraud_detection_cudf_pipeline(
 
     Data flow:
     1. S3 -> Download raw TabFormer CSV + preprocessing script to PVC
-    2. PVC -> cuDF preprocessing on GPU (RAPIDS container)
+    2. GitHub -> Download preprocessing script to PVC
     3. PVC -> Write training config
     4. PVC -> Train GNN+XGBoost model (GPU)
     5. PVC -> Upload trained model to S3
@@ -255,12 +259,12 @@ def fraud_detection_cudf_pipeline(
         storage_class_name=STORAGE_CLASS,
     )
 
-    # Step 1: Download raw data and script from S3
+    # Step 1: Download raw data from S3 and script from GitHub
     download_task = download_raw_data_to_pvc(
         s3_bucket=s3_bucket,
         s3_region=s3_region,
         raw_data_path=raw_data_path,
-        script_path=script_path,
+        script_url=script_url,
         data_mount_path="/data",
     )
     download_task.after(data_pvc)
