@@ -101,6 +101,7 @@ export class TritonImageRepoStack extends cdk.Stack {
         COMMIT_HASH: { value: "latest" },
       },
       timeout: cdk.Duration.hours(2),
+      badge: false,
     });
 
     // Grant CodeBuild permission to push to ECR

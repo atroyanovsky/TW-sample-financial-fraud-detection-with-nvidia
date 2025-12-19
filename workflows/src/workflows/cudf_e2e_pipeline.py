@@ -25,12 +25,23 @@ STORAGE_CLASS = "gp3"
 
 # Container images
 RAPIDS_IMAGE = "rapidsai/base:25.12-cuda13-py3.12"
-TRAINING_IMAGE = "915948456033.dkr.ecr.us-west-2.amazonaws.com/nvidia-training-repo:latest"
+TRAINING_IMAGE = (
+    "915948456033.dkr.ecr.us-west-2.amazonaws.com/nvidia-training-repo:latest"
+)
 
 
 @dsl.component(
     base_image="python:3.11",
-    packages_to_install=["boto3", "botocore", "s3transfer", "jmespath", "python-dateutil", "urllib3", "six", "requests"],
+    packages_to_install=[
+        "boto3",
+        "botocore",
+        "s3transfer",
+        "jmespath",
+        "python-dateutil",
+        "urllib3",
+        "six",
+        "requests",
+    ],
 )
 def download_raw_data_to_pvc(
     s3_bucket: str,
@@ -41,6 +52,7 @@ def download_raw_data_to_pvc(
 ):
     """Download raw CSV from S3 and preprocessing script from GitHub to PVC."""
     import os
+
     import boto3
     import requests
 
@@ -171,7 +183,15 @@ def run_nvidia_training():
 
 @dsl.component(
     base_image="python:3.11",
-    packages_to_install=["boto3", "botocore", "s3transfer", "jmespath", "python-dateutil", "urllib3", "six"],
+    packages_to_install=[
+        "boto3",
+        "botocore",
+        "s3transfer",
+        "jmespath",
+        "python-dateutil",
+        "urllib3",
+        "six",
+    ],
 )
 def upload_model_to_s3(
     model_bucket: str,
@@ -182,6 +202,7 @@ def upload_model_to_s3(
     """Upload trained model from PVC to S3."""
     import os
     from pathlib import Path
+
     import boto3
 
     s3 = boto3.client("s3", region_name=s3_region)
@@ -218,7 +239,7 @@ def fraud_detection_cudf_pipeline(
     model_bucket: str = "ml-on-containers-915948456033-model-registry",
     s3_region: str = "us-west-2",
     raw_data_path: str = "data/TabFormer/raw/card_transaction.v1.csv",
-    script_url: str = "https://raw.githubusercontent.com/aws-samples/amazon-eks-machine-learning-with-terraform-and-kubeflow/main/examples/fraud-detection/workflows/src/workflows/components/preprocess_tabformer.py",
+    script_url: str = "https://raw.githubusercontent.com/aws-samples/sample-financial-fraud-detection-with-nvidia/refs/heads/v2/workflows/src/workflows/components/preprocess_tabformer.py",
     s3_model_prefix: str = "model-repository",
     # GNN hyperparameters
     gnn_hidden_channels: int = 32,
@@ -269,14 +290,20 @@ def fraud_detection_cudf_pipeline(
     )
     download_task.after(data_pvc)
     download_task.set_caching_options(False)
-    kubernetes.mount_pvc(download_task, pvc_name=data_pvc.outputs["name"], mount_path="/data")
+    kubernetes.mount_pvc(
+        download_task, pvc_name=data_pvc.outputs["name"], mount_path="/data"
+    )
 
     # Step 2: Run cuDF preprocessing (GPU)
     preprocess_task = run_cudf_preprocessing()
     preprocess_task.after(download_task)
-    kubernetes.mount_pvc(preprocess_task, pvc_name=data_pvc.outputs["name"], mount_path="/data")
+    kubernetes.mount_pvc(
+        preprocess_task, pvc_name=data_pvc.outputs["name"], mount_path="/data"
+    )
     # GPU node selection for preprocessing
-    kubernetes.add_node_selector(preprocess_task, label_key="nvidia.com/gpu", label_value="true")
+    kubernetes.add_node_selector(
+        preprocess_task, label_key="nvidia.com/gpu", label_value="true"
+    )
     preprocess_task.set_memory_request("16Gi").set_memory_limit("50Gi")
     preprocess_task.set_cpu_request("4").set_cpu_limit("8")
     preprocess_task.set_accelerator_limit(1)
@@ -300,16 +327,24 @@ def fraud_detection_cudf_pipeline(
         xgb_gamma=xgb_gamma,
     )
     config_task.after(preprocess_task)
-    kubernetes.mount_pvc(config_task, pvc_name=data_pvc.outputs["name"], mount_path="/data")
+    kubernetes.mount_pvc(
+        config_task, pvc_name=data_pvc.outputs["name"], mount_path="/data"
+    )
     config_task.set_caching_options(False)
 
     # Step 4: Train model (GPU)
     train_task = run_nvidia_training()
     train_task.after(config_task)
     train_task.after(model_pvc)
-    kubernetes.mount_pvc(train_task, pvc_name=data_pvc.outputs["name"], mount_path="/data")
-    kubernetes.mount_pvc(train_task, pvc_name=model_pvc.outputs["name"], mount_path="/trained_models")
-    kubernetes.add_node_selector(train_task, label_key="nvidia.com/gpu", label_value="true")
+    kubernetes.mount_pvc(
+        train_task, pvc_name=data_pvc.outputs["name"], mount_path="/data"
+    )
+    kubernetes.mount_pvc(
+        train_task, pvc_name=model_pvc.outputs["name"], mount_path="/trained_models"
+    )
+    kubernetes.add_node_selector(
+        train_task, label_key="nvidia.com/gpu", label_value="true"
+    )
     train_task.set_memory_request("16Gi").set_memory_limit("32Gi")
     train_task.set_cpu_request("4").set_cpu_limit("8")
     train_task.set_accelerator_limit(1)
@@ -324,7 +359,9 @@ def fraud_detection_cudf_pipeline(
         s3_region=s3_region,
     )
     upload_task.after(train_task)
-    kubernetes.mount_pvc(upload_task, pvc_name=model_pvc.outputs["name"], mount_path="/trained_models")
+    kubernetes.mount_pvc(
+        upload_task, pvc_name=model_pvc.outputs["name"], mount_path="/trained_models"
+    )
     upload_task.set_caching_options(False)
 
     # Step 6: Cleanup PVCs
