@@ -97,7 +97,16 @@ deploykf_core:
   ##        deploykf-istio-gateway
   ## --------------------------------------
   deploykf_istio_gateway:
-    {} # <-- REMOVE THIS, IF YOU INCLUDE VALUES UNDER THIS SECTION!
+    gatewayService:
+      name: "deploykf-gateway"
+      type: "LoadBalancer"
+      annotations:
+        service.beta.kubernetes.io/aws-load-balancer-type: "external"
+        service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+        service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+      ports:
+        http: 80
+        https: 443
 
   ## --------------------------------------
   ##      deploykf-profiles-generator
