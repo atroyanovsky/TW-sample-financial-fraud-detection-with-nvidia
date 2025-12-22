@@ -47,40 +47,7 @@ This creates:
 - ECR repositories for training and inference images
 - S3 buckets for data and models
 
-### 2. Build Custom Triton Image
-
-The fraud detection model requires PyTorch, PyTorch Geometric, XGBoost, and Captum. Trigger the CodeBuild project:
-
-```bash
-# Get the CodeBuild project name
-aws cloudformation describe-stacks \
-  --stack-name NvidiaFraudDetectionTritonImageRepo \
-  --query "Stacks[0].Outputs[?OutputKey=='TritonBuildProject'].OutputValue" \
-  --output text
-
-# Start the build
-aws codebuild start-build --project-name triton-inference-image-build
-```
-
-### 3. Upload Training Image to ECR
-
-```bash
-# Pull NVIDIA training image
-docker pull nvcr.io/nvidia/cugraph/financial-fraud-training:2.0.0
-
-# Get ECR URI
-export TRAINING_ECR=$(aws cloudformation describe-stacks \
-  --stack-name NvidiaFraudDetectionTrainingImageRepo \
-  --query "Stacks[0].Outputs[?OutputKey=='TrainingImageRepoUri'].OutputValue" \
-  --output text)
-
-# Login and push
-aws ecr get-login-password | docker login --username AWS --password-stdin ${TRAINING_ECR%%/*}
-docker tag nvcr.io/nvidia/cugraph/financial-fraud-training:2.0.0 $TRAINING_ECR:latest
-docker push $TRAINING_ECR:latest
-```
-
-### 4. Access Kubeflow Dashboard
+### 2. Access Kubeflow Dashboard
 
 ```bash
 # Update kubeconfig
@@ -92,7 +59,7 @@ kubectl port-forward -n kubeflow svc/ml-pipeline-ui 8080:80
 
 Open http://localhost:8080 to access the Kubeflow Pipelines UI.
 
-### 5. Run the Pipeline
+### 3. Run the Pipeline
 
 Use the Jupyter notebook in `notebooks/kubeflow-fraud-detection.ipynb` from a Kubeflow Notebook Server, or submit the compiled pipeline:
 
@@ -152,5 +119,6 @@ This library is licensed under the MIT-0 License. See the [LICENSE](LICENSE) fil
 ## Authors
 
 - Shardul Vaidya, AWS NGDE Architect
-- Ragib Ahsan, AWS AI Acceleration Architect
 - Zachary Jacobson, AWS Partner Solutions Architect
+- Ragib Ahsan, AWS AI Acceleration Architect
+
