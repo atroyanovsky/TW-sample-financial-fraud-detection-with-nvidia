@@ -1,4 +1,6 @@
 # Copyright (c) 2025, Amazon Web Services, Inc.
+# Original preprocessing flow owned by Nvidia, rebuilt by vshardul@amazon.com
+# for Kubeflow pipelines
 """End-to-end Kubeflow Pipeline with RAPIDS/cuDF preprocessing.
 
 This pipeline uses NVIDIA RAPIDS for GPU-accelerated preprocessing:
@@ -16,7 +18,33 @@ Pipeline steps:
 Compatible with KFP 2.1.x and kfp-kubernetes 1.0.x
 """
 
+import boto3
 from kfp import compiler, dsl, kubernetes
+
+# Auto-detect AWS account ID and region
+try:
+    sts_client = boto3.client('sts')
+    account_info = sts_client.get_caller_identity()
+    AWS_ACCOUNT = account_info['Account']
+    print(f"Detected AWS Account: {AWS_ACCOUNT}")
+except Exception as e:
+    raise RuntimeError(
+        f"Failed to auto-detect AWS account ID. Please ensure AWS credentials are configured.\n"
+        f"Error: {e}\n"
+    ) from e
+
+try:
+    session = boto3.Session()
+    AWS_REGION = session.region_name
+    if not AWS_REGION:
+        raise ValueError("AWS region not configured")
+    print(f"Detected AWS Region: {AWS_REGION}")
+except Exception as e:
+    raise RuntimeError(
+        f"Failed to auto-detect AWS region. Please ensure AWS region is configured.\n"
+        f"Error: {e}\n"
+        f"Run 'aws configure' or set AWS_DEFAULT_REGION environment variable."
+    ) from e
 
 # PVC configuration
 DATA_PVC_SIZE = "100Gi"
@@ -25,9 +53,7 @@ STORAGE_CLASS = "gp3"
 
 # Container images
 RAPIDS_IMAGE = "rapidsai/base:25.12-cuda13-py3.12"
-TRAINING_IMAGE = (
-    "915948456033.dkr.ecr.us-west-2.amazonaws.com/nvidia-training-repo:latest"
-)
+TRAINING_IMAGE = f"{AWS_ACCOUNT}.dkr.ecr.{AWS_REGION}.amazonaws.com/nvidia-training-repo:latest"
 
 
 @dsl.component(
@@ -235,9 +261,9 @@ def upload_model_to_s3(
 )
 def fraud_detection_cudf_pipeline(
     # S3 configuration
-    s3_bucket: str = "ml-on-containers-915948456033",
-    model_bucket: str = "ml-on-containers-915948456033-model-registry",
-    s3_region: str = "us-west-2",
+    s3_bucket: str = f"ml-on-containers-{AWS_ACCOUNT}",
+    model_bucket: str = f"ml-on-containers-{AWS_ACCOUNT}-model-registry",
+    s3_region: str = AWS_REGION,
     raw_data_path: str = "data/TabFormer/raw/card_transaction.v1.csv",
     script_url: str = "https://raw.githubusercontent.com/aws-samples/sample-financial-fraud-detection-with-nvidia/refs/heads/v2/workflows/src/workflows/components/preprocess_tabformer.py",
     s3_model_prefix: str = "model-repository",
