@@ -117,6 +117,6 @@ This library is licensed under the MIT-0 License. See the [LICENSE](LICENSE) fil
 
 ## Authors
 
-- Shardul Vaidya, AWS NGDE Architect
+- Shardul Vaidya, AWS Partner Solutions Architect
 - Zachary Jacobson, AWS Partner Solutions Architect
 - Ragib Ahsan, AWS AI Acceleration Architect
