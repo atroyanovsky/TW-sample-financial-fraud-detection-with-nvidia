@@ -11,7 +11,7 @@ This NVIDIA Financial Fraud Detection AI Blueprint provides a reference implemen
 1. **Kubeflow Pipelines** orchestrates the entire ML workflow on EKS, from data preprocessing to model deployment
 2. **RAPIDS/cuDF** performs GPU-accelerated data preprocessing on the TabFormer dataset
 3. **NVIDIA Training Container** trains a GNN+XGBoost ensemble model for fraud detection
-4. **S3** stores raw data, processed datasets, and trained models
+4. **S3** stores raw data, and trained models
 5. **NVIDIA Triton Inference Server** serves the trained model on GPU-enabled EKS nodes
 6. **ArgoCD** manages GitOps-based deployments for infrastructure and model updates
 
@@ -19,7 +19,6 @@ This NVIDIA Financial Fraud Detection AI Blueprint provides a reference implemen
 
 1. **AWS Account** with permissions to create EKS, EC2, ECR, and S3 resources
 2. **Local tools**: Docker, Node.js 20+, AWS CLI, kubectl
-3. **~30GB storage** for container images
 
 ## Quick Start
 
@@ -53,11 +52,11 @@ This creates:
 # Update kubeconfig
 aws eks update-kubeconfig --region <region> --name nvidia-fraud-detection-cluster-blueprint
 
-# Port-forward to Kubeflow UI
-kubectl port-forward -n kubeflow svc/ml-pipeline-ui 8080:80
+# Get the External IP for the Kubeflow Proxy
+kubectl get svc -n deploykf-istio-gateway deploykf-gateway
 ```
 
-Open http://localhost:8080 to access the Kubeflow Pipelines UI.
+Then navigate to the external ip in your browser to get access to the Kubeflow UI.
 
 ### 3. Run the Pipeline
 
@@ -121,4 +120,3 @@ This library is licensed under the MIT-0 License. See the [LICENSE](LICENSE) fil
 - Shardul Vaidya, AWS NGDE Architect
 - Zachary Jacobson, AWS Partner Solutions Architect
 - Ragib Ahsan, AWS AI Acceleration Architect
-
