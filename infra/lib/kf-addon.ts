@@ -11,6 +11,7 @@ export interface KfAddonProps {
   bucketName: string;
   dataBucketName: string;
   modelBucketName: string;
+  hostname: string;
 }
 
 export class KfAddon implements ClusterAddOn {
@@ -43,7 +44,7 @@ export class KfAddon implements ClusterAddOn {
       jsonPath: '.status.conditions[?(@.type=="Established")].status'
     });
 
-    const deployKfManifest = clusterInfo.cluster.addManifest("deployKF-argo-app", deployKfApp(this.props.bucketName, clusterInfo.cluster.stack.region, kfRole.roleArn))
+    const deployKfManifest = clusterInfo.cluster.addManifest("deployKF-argo-app", deployKfApp(this.props.bucketName, clusterInfo.cluster.stack.region, kfRole.roleArn, this.props.hostname))
     deployKfManifest.node.addDependency(argoCrdCehck)
     return Promise.resolve(deployKfManifest)
   }

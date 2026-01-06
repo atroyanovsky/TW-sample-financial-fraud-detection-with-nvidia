@@ -8,6 +8,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import { KfAddon } from "./kf-addon";
 import { argoCdValues } from './argocd-values';
 import { NodePoolAddon } from './nodepool-addon';
+import * as sm from 'aws-cdk-lib/aws-secretsmanager'
 
 export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
   /**
@@ -31,6 +32,9 @@ export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
    * The Triton inference server image URI (from ECR)
    */
   tritonImageUri: string;
+
+  ngcSecretName: string;
+
 }
 
 export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
@@ -189,7 +193,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
         version: "v25.3.2"
       }),
       new blueprints.addons.SecretsStoreAddOn(),
-      //new blueprints.addons.CertManagerAddOn(),
+      new blueprints.addons.ExternalsSecretsAddOn(),
       new blueprints.addons.EbsCsiDriverAddOn({ storageClass: "gp3" }),
       new blueprints.addons.ArgoCDAddOn({
         bootstrapRepo: {
@@ -209,7 +213,8 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
           bucketName: props.modelBucketName,
           image: {
             imageName: props.tritonImageUri
-          }
+          },
+          ngcSecretName: props.ngcSecretName
         },
         values: argoCdValues
       }),

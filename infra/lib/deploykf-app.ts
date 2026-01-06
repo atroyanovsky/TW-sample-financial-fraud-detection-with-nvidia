@@ -1,4 +1,4 @@
-export const deployKfApp = (bucket: string, region: string, roleArn: string) => {
+export const deployKfApp = (bucket: string, region: string, roleArn: string, hostname: string) => {
   return {
     apiVersion: "argoproj.io/v1alpha1",
     kind: "Application",
@@ -97,6 +97,8 @@ deploykf_core:
   ##        deploykf-istio-gateway
   ## --------------------------------------
   deploykf_istio_gateway:
+    gateway:
+      hostname: ${hostname}
     gatewayService:
       name: "deploykf-gateway"
       type: "LoadBalancer"

@@ -13,5 +13,4 @@ image:
 bucketName: bucket
 namespace: triton
 
-
-
+ngcSecretName: ngc-api-key
