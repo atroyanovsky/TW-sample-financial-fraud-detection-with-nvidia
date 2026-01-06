@@ -163,9 +163,13 @@ npx cdk destroy --all
 
 This removes the EKS cluster, node groups, and associated resources. S3 buckets with data may need manual deletion if they're not empty.
 
+## Contributing
+
+See [CONTRIBUTING](CONTRIBUTING.md) for our contribution guide.
+
 ## Security
 
-See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for reporting security issues.
+See [CONTRIBUTING](CONTRIBUTING.md##security-issue-notifications) for reporting security issues.
 
 ## License
 
