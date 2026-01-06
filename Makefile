@@ -1,110 +1,129 @@
-# Makefile for AWS ECR setup and Nvidia container deployment
-# This Makefile handles setting up ECR repositories and pushing Nvidia containers for
-# the fraud detection blueprint project
+# Makefile for GNN based financial fraud detection with Nvidia and AWS
+# Handles infrastructure deployment, pipeline execution, and local development
 
 # AWS Configuration
-AWS_REGION ?= us-east-1
-AWS_ACCOUNT_ID := $(shell aws sts get-caller-identity --query Account --output text)
+AWS_REGION ?= us-west-2
+AWS_ACCOUNT_ID := $(shell aws sts get-caller-identity --query Account --output text 2>/dev/null)
+CLUSTER_NAME := nvidia-fraud-detection-cluster-blueprint
 
-# Container Registry Configuration
-ECR_REPO_NAME := nvidia-fraud-detection
-NVIDIA_BASE_IMAGE := nvcr.io/nvidia/cugraph/financial-fraud-training:2.0.0
-ECR_IMAGE_URI := $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_REPO_NAME):latest
+# Container Images
+TRAINING_IMAGE := $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/nvidia-training-repo:latest
+TRITON_IMAGE := $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/triton-inference-server:latest
 
-# Colors for terminal output
+# Kubeflow
+KF_NAMESPACE := team-1
+
+# Colors
 YELLOW := \033[0;33m
 GREEN := \033[0;32m
 RED := \033[0;31m
-NC := \033[0m # No Color
+NC := \033[0m
 
-.PHONY: help check-deps create-ecr pull-nvidia-image tag-image push-image setup-ecr clean
+.PHONY: help check-deps deploy destroy kubeconfig dashboard triton-status pipeline-run clean
 
-# Default target
 help:
-	@echo "$(YELLOW)Financial Fraud Detection - AWS Container Setup$(NC)"
+	@echo "$(YELLOW)NVIDIA Financial Fraud Detection - Kubeflow on EKS$(NC)"
 	@echo ""
-	@echo "$(GREEN)Available targets:$(NC)"
-	@echo "  help               : Display this help message"
-	@echo "  check-deps         : Check if required dependencies are installed"
-	@echo "  create-ecr         : Create ECR repository if it doesn't exist"
-	@echo "  pull-nvidia-image  : Pull Nvidia base image from NGC"
-	@echo "  tag-image          : Tag Nvidia image for ECR"
-	@echo "  push-image         : Push tagged image to ECR"
-	@echo "  setup-ecr          : Complete ECR setup process (all steps)"
-	@echo "  clean              : Clean up local Docker images"
-	@echo "  setup-conda        : Setup conda environment in Sagemaker"
+	@echo "$(GREEN)Infrastructure:$(NC)"
+	@echo "  deploy             : Deploy all CDK stacks (EKS, Kubeflow, Triton)"
+	@echo "  destroy            : Tear down all infrastructure"
+	@echo "  kubeconfig         : Update kubeconfig for the cluster"
+	@echo ""
+	@echo "$(GREEN)Kubeflow:$(NC)"
+	@echo "  dashboard          : Get Kubeflow dashboard URL"
+	@echo "  notebook-apply     : Deploy the Kubeflow notebook server"
+	@echo "  pipeline-compile   : Compile the fraud detection pipeline"
+	@echo "  pipeline-upload    : Upload compiled pipeline to Kubeflow"
+	@echo ""
+	@echo "$(GREEN)Triton:$(NC)"
+	@echo "  triton-status      : Check Triton Inference Server status"
+	@echo "  triton-models      : List loaded models"
+	@echo "  triton-build       : Trigger Triton image rebuild"
+	@echo ""
+	@echo "$(GREEN)Development:$(NC)"
+	@echo "  check-deps         : Verify required tools are installed"
+	@echo "  clean              : Clean up local artifacts"
+	@echo ""
 	@echo "$(YELLOW)Example:$(NC)"
-	@echo "  make setup-ecr AWS_REGION=us-east-1"
+	@echo "  make deploy AWS_REGION=us-west-2"
 
-# Check if required tools are installed
+# Check dependencies
 check-deps:
 	@echo "$(YELLOW)Checking dependencies...$(NC)"
-	@which aws > /dev/null || (echo "$(RED)AWS CLI not found. Please install it.$(NC)" && exit 1)
-	@which docker > /dev/null || (echo "$(RED)Docker not found. Please install it.$(NC)" && exit 1)
-	@aws sts get-caller-identity > /dev/null || (echo "$(RED)AWS credentials not configured. Please run 'aws configure'.$(NC)" && exit 1)
-	@echo "$(GREEN)All dependencies are installed.$(NC)"
+	@which aws > /dev/null || (echo "$(RED)AWS CLI not found$(NC)" && exit 1)
+	@which kubectl > /dev/null || (echo "$(RED)kubectl not found$(NC)" && exit 1)
+	@which node > /dev/null || (echo "$(RED)Node.js not found$(NC)" && exit 1)
+	@which docker > /dev/null || (echo "$(RED)Docker not found$(NC)" && exit 1)
+	@aws sts get-caller-identity > /dev/null 2>&1 || (echo "$(RED)AWS credentials not configured$(NC)" && exit 1)
+	@echo "$(GREEN)All dependencies installed$(NC)"
 
-# Create ECR repository if it doesn't exist
-create-ecr: check-deps
-	@echo "$(YELLOW)Creating ECR repository if it doesn't exist...$(NC)"
-	@if ! aws ecr describe-repositories --repository-names $(ECR_REPO_NAME) --region $(AWS_REGION) > /dev/null 2>&1; then \
-		echo "Creating ECR repository: $(ECR_REPO_NAME)"; \
-		aws ecr create-repository --repository-name $(ECR_REPO_NAME) --region $(AWS_REGION); \
-		echo "$(GREEN)ECR repository created: $(ECR_REPO_NAME)$(NC)"; \
-	else \
-		echo "$(GREEN)ECR repository already exists: $(ECR_REPO_NAME)$(NC)"; \
-	fi
+# Deploy infrastructure
+deploy: check-deps
+	@echo "$(YELLOW)Deploying CDK stacks...$(NC)"
+	cd infra && npm install && npx cdk deploy --all --require-approval never
+	@echo "$(GREEN)Deployment complete$(NC)"
+	@$(MAKE) kubeconfig
 
-# Login to ECR
-ecr-login: check-deps
-	@echo "$(YELLOW)Logging into ECR...$(NC)"
-	@aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
-	@echo "$(GREEN)Successfully logged into ECR.$(NC)"
+# Destroy infrastructure
+destroy:
+	@echo "$(RED)Destroying all infrastructure...$(NC)"
+	cd infra && npx cdk destroy --all --force
+	@echo "$(GREEN)Infrastructure destroyed$(NC)"
 
-# Pull Nvidia base image from NGC
-pull-nvidia-image: check-deps
-	@echo "$(YELLOW)Pulling Nvidia base image from NGC...$(NC)"
-	@echo "This may take some time depending on your internet connection."
-	@if ! docker pull $(NVIDIA_BASE_IMAGE) --platform=linux/amd64; then \
-		echo "$(RED)Failed to pull Nvidia image. Make sure you're logged in to NGC registry.$(NC)"; \
-		echo "Run 'docker login nvcr.io' with your NGC API key as password and '\$$oauthtoken' as username."; \
-		exit 1; \
-	fi
-	@echo "$(GREEN)Successfully pulled Nvidia base image.$(NC)"
+# Update kubeconfig
+kubeconfig:
+	@echo "$(YELLOW)Updating kubeconfig...$(NC)"
+	aws eks update-kubeconfig --region $(AWS_REGION) --name $(CLUSTER_NAME)
+	@echo "$(GREEN)kubeconfig updated$(NC)"
 
-# Tag the image for ECR
-tag-image: pull-nvidia-image
-	@echo "$(YELLOW)Tagging image for ECR...$(NC)"
-	@docker tag $(NVIDIA_BASE_IMAGE) $(ECR_IMAGE_URI)
-	@echo "$(GREEN)Successfully tagged image: $(ECR_IMAGE_URI)$(NC)"
+# Get dashboard URL
+dashboard:
+	@echo "$(YELLOW)Kubeflow Dashboard:$(NC)"
+	@kubectl get svc -n deploykf-istio-gateway deploykf-gateway -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Load balancer not ready"
+	@echo ""
+	@echo "Default credentials: user@example.com / user"
 
-# Push the image to ECR
-push-image: create-ecr ecr-login tag-image
-	@echo "$(YELLOW)Pushing image to ECR...$(NC)"
-	@docker push $(ECR_IMAGE_URI)
-	@echo "$(GREEN)Successfully pushed image to ECR: $(ECR_IMAGE_URI)$(NC)"
+# Deploy notebook server
+notebook-apply:
+	@echo "$(YELLOW)Deploying Kubeflow notebook server...$(NC)"
+	kubectl apply -f notebooks/kubeflow-notebook-server.yaml
+	@echo "$(GREEN)Notebook server deployed to $(KF_NAMESPACE)$(NC)"
 
-# Complete ECR setup process
-setup-ecr: check-deps create-ecr pull-nvidia-image tag-image push-image
-	@echo "$(GREEN)=========================================================$(NC)"
-	@echo "$(GREEN)ECR setup complete!$(NC)"
-	@echo "$(GREEN)Container is now available at: $(ECR_IMAGE_URI)$(NC)"
-	@echo "$(GREEN)Use this URI in your SageMaker training job.$(NC)"
-	@echo "$(GREEN)=========================================================$(NC)"
+# Compile pipeline
+pipeline-compile:
+	@echo "$(YELLOW)Compiling fraud detection pipeline...$(NC)"
+	cd workflows && pip install -q kfp==2.10.1 kfp-kubernetes==1.4.0 && python -m workflows.cudf_e2e_pipeline
+	@echo "$(GREEN)Pipeline compiled: workflows/fraud_detection_cudf_pipeline.yaml$(NC)"
 
-# Clean up local Docker images
+# Upload pipeline (requires port-forward or dashboard access)
+pipeline-upload: pipeline-compile
+	@echo "$(YELLOW)Upload the pipeline via Kubeflow UI:$(NC)"
+	@echo "1. Open the dashboard: make dashboard"
+	@echo "2. Navigate to Pipelines > Upload Pipeline"
+	@echo "3. Upload: workflows/fraud_detection_cudf_pipeline.yaml"
+
+# Triton status
+triton-status:
+	@echo "$(YELLOW)Triton Inference Server Status:$(NC)"
+	@kubectl get pods -n triton -l app.kubernetes.io/name=triton-inference-server
+	@echo ""
+	@kubectl get deployment -n triton
+
+# List Triton models
+triton-models:
+	@echo "$(YELLOW)Checking Triton models...$(NC)"
+	@kubectl exec -n triton deploy/triton-server-triton-inference-server -- curl -s localhost:8000/v2/models | python3 -m json.tool 2>/dev/null || echo "Triton not ready or no models loaded"
+
+# Trigger Triton image rebuild
+triton-build:
+	@echo "$(YELLOW)Triggering Triton image rebuild...$(NC)"
+	aws codebuild start-build --project-name triton-inference-image-build --region $(AWS_REGION)
+	@echo "$(GREEN)Build started. Check CodeBuild console for progress.$(NC)"
+
+# Clean local artifacts
 clean:
-	@echo "$(YELLOW)Cleaning up local Docker images...$(NC)"
-	-docker rmi $(ECR_IMAGE_URI) 2>/dev/null || true
-	-docker rmi $(NVIDIA_BASE_IMAGE) 2>/dev/null || true
-	@echo "$(GREEN)Cleanup complete.$(NC)"
-
-
-setup-conda:
-	@echo "$(YELLOW)Setting up conda environment...$(NC)"
-	-conda env create -f ./conda/notebook_env.yaml
-	-conda init
-	-conda activate fraud_blueprint_env
-	-conda install -y ipykernel -n fraud_blueprint_env
-	-python -m ipykernel install --user --name fraud_blueprint_env --display-name "fraud_blueprint_env"
-	@echo "$(GREEN)Conda environment setup complete.$(NC)"
+	@echo "$(YELLOW)Cleaning up...$(NC)"
+	-rm -f workflows/fraud_detection_cudf_pipeline.yaml
+	-rm -rf infra/cdk.out
+	-rm -rf infra/node_modules
+	@echo "$(GREEN)Cleanup complete$(NC)"
