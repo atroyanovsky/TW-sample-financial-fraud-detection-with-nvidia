@@ -1,17 +1,31 @@
-#cpp code owners
-cpp/               @<org>/<repo>-cpp-codeowners
+# CODEOWNERS for AWS Financial Fraud Detection
+# These owners will be requested for review on PRs touching their areas.
 
-#python code owners
-python/            @<org>/<repo>-python-codeowners
+# Default owners for everything
+*                           @5herlocked @zjaco13
 
-#cmake code owners
-**/CMakeLists.txt  @<org>/<repo>-cmake-codeowners
-**/cmake/          @<org>/<repo>-cmake-codeowners
+# Infrastructure (CDK, Kubernetes manifests)
+/infra/                     @5herlocked @zjaco13
+/infra/lib/                 @5herlocked @zjaco13
+/infra/manifests/           @5herlocked @zjaco13
 
-#build/ops code owners
-.github/           @<org>/ops-codeowners 
-ci/                @<org>/ops-codeowners
-conda/             @<org>/ops-codeowners
-**/Dockerfile      @<org>/ops-codeowners
-**/.dockerignore   @<org>/ops-codeowners
-docker/            @<org>/ops-codeowners
+# ML Pipeline and Workflows
+/workflows/                 @5herlocked
+/notebooks/                 @5herlocked
+
+# Triton Inference Server
+/triton/                    @5herlocked
+
+# Data and Preprocessing
+/src/                       @5herlocked
+/data/                      @5herlocked
+
+# Documentation
+/docs/                      @5herlocked
+*.md                        @5herlocked
+
+# CI/CD and GitHub Config
+/.github/                   @5herlocked @zjaco13
+
+# Conda environment
+/conda/                     @5herlocked
