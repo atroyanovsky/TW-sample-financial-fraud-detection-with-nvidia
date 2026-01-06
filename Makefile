@@ -33,7 +33,7 @@ NC := \033[0m
         pipeline-compile pipeline-upload triton-status triton-models triton-build clean
 
 help:
-	@echo "$(YELLOW)NVIDIA Financial Fraud Detection - Kubeflow on EKS$(NC)"
+	@echo "$(YELLOW)GNN based financial fraud detection - Kubeflow on EKS$(NC)"
 	@echo ""
 	@echo "$(GREEN)Infrastructure:$(NC)"
 	@echo "  deploy             : Deploy all CDK stacks (EKS, Kubeflow, Triton)"
