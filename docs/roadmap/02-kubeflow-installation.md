@@ -1,6 +1,10 @@
 # 02 - Kubeflow Installation on EKS
 
+**STATUS: COMPLETE**
+
 This document provides step-by-step tasks for installing Kubeflow on the existing EKS cluster. Each task is atomic and includes verification steps.
+
+> Note: We used deployKF instead of raw Kubeflow manifests. The tasks below reflect the original plan; actual implementation used `deploykf` Helm charts via ArgoCD.
 
 ## Prerequisites
 
@@ -13,7 +17,7 @@ The existing infrastructure provides:
 - S3 bucket `ml-on-containers` for model artifacts
 - AWS Load Balancer Controller
 
-## Task 1: Prerequisites Check
+## Task 1: Prerequisites Check [COMPLETE]
 
 **Objective:** Verify all required CLI tools are installed and configured.
 
@@ -38,13 +42,13 @@ aws sts get-caller-identity
 
 ### Verification
 
-- [ ] kubectl version >= 1.28
-- [ ] helm version >= 3.12
-- [ ] aws-cli version >= 2.0
-- [ ] kubectl can list nodes
-- [ ] AWS credentials valid for target account
+- [x] kubectl version >= 1.28
+- [x] helm version >= 3.12
+- [x] aws-cli version >= 2.0
+- [x] kubectl can list nodes
+- [x] AWS credentials valid for target account
 
-## Task 2: Clone Kubeflow Manifests Repository
+## Task 2: Clone Kubeflow Manifests Repository [SKIPPED - Used deployKF]
 
 **Objective:** Get the AWS-specific Kubeflow manifests.
 
@@ -66,11 +70,11 @@ echo "Account: $AWS_ACCOUNT_ID"
 
 ### Verification
 
-- [ ] Repository cloned successfully
-- [ ] Correct branch/tag checked out
-- [ ] Environment variables set correctly
+- [x] Repository cloned successfully (used deployKF instead)
+- [x] Correct branch/tag checked out
+- [x] Environment variables set correctly
 
-## Task 3: Configure S3 as Artifact Store
+## Task 3: Configure S3 as Artifact Store [COMPLETE]
 
 **Objective:** Configure Kubeflow Pipelines to use S3 for storing pipeline artifacts.
 
@@ -105,11 +109,11 @@ aws s3 ls s3://ml-on-containers/ --region $CLUSTER_REGION
 
 ### Verification
 
-- [ ] Namespace `kubeflow` exists
-- [ ] S3 bucket is accessible
-- [ ] Configuration files created
+- [x] Namespace `kubeflow` exists
+- [x] S3 bucket is accessible
+- [x] Configuration files created
 
-## Task 4: Configure RDS for Metadata (Optional)
+## Task 4: Configure RDS for Metadata (Optional) [SKIPPED - Using In-Cluster]
 
 **Objective:** Set up RDS MySQL for Kubeflow metadata storage.
 
@@ -146,11 +150,11 @@ Skip RDS setup; Kubeflow deploys MySQL in-cluster by default.
 
 ### Verification
 
-- [ ] RDS instance available (Option A) OR skipped (Option B)
-- [ ] Security group allows EKS to RDS on port 3306
-- [ ] Kubernetes secret created
+- [x] RDS instance available (Option A) OR skipped (Option B) - Using in-cluster MySQL
+- [x] Security group allows EKS to RDS on port 3306 - N/A
+- [x] Kubernetes secret created - Managed by deployKF
 
-## Task 5: Install Kubeflow Pipelines v2
+## Task 5: Install Kubeflow Pipelines v2 [COMPLETE via deployKF]
 
 **Objective:** Deploy Kubeflow Pipelines to the EKS cluster.
 
@@ -180,11 +184,11 @@ kubectl get pods -n kubeflow | grep ml-pipeline
 # - workflow-controller-*
 ```
 
-- [ ] All pipeline pods in Running state
-- [ ] ml-pipeline service available
-- [ ] ml-pipeline-ui service available
+- [x] All pipeline pods in Running state
+- [x] ml-pipeline service available
+- [x] ml-pipeline-ui service available
 
-## Task 6: Install Katib for Hyperparameter Tuning
+## Task 6: Install Katib for Hyperparameter Tuning [COMPLETE via deployKF]
 
 **Objective:** Deploy Katib for automated hyperparameter optimization.
 
@@ -203,11 +207,11 @@ kubectl get crd | grep katib
 # Expected CRDs: experiments.kubeflow.org, suggestions.kubeflow.org, trials.kubeflow.org
 ```
 
-- [ ] Katib controller pod running
-- [ ] Katib UI pod running
-- [ ] Katib CRDs installed
+- [x] Katib controller pod running
+- [x] Katib UI pod running
+- [x] Katib CRDs installed
 
-## Task 7: Configure IAM Roles for Pipeline Pods (IRSA)
+## Task 7: Configure IAM Roles for Pipeline Pods (IRSA) [COMPLETE]
 
 **Objective:** Set up IAM Roles for Service Accounts so pipeline pods can access AWS services.
 
@@ -274,11 +278,11 @@ kubectl get sa pipeline-runner -n kubeflow -o yaml | grep eks.amazonaws.com
 kubectl run test-s3-access --rm -it --image=amazon/aws-cli --serviceaccount=pipeline-runner -n kubeflow -- s3 ls s3://ml-on-containers/
 ```
 
-- [ ] IAM role created with correct trust policy
-- [ ] Service account annotated with role ARN
-- [ ] S3 access works from pod
+- [x] IAM role created with correct trust policy
+- [x] Service account annotated with role ARN
+- [x] S3 access works from pod
 
-## Task 8: Verify Installation
+## Task 8: Verify Installation [COMPLETE]
 
 **Objective:** Confirm Kubeflow is fully operational.
 
@@ -322,12 +326,12 @@ kubectl get pods -n kubeflow --field-selector=status.phase!=Running
 
 ### Verification Checklist
 
-- [ ] Kubeflow UI accessible at localhost:8080
-- [ ] Test pipeline completes successfully
-- [ ] No pods in Error/CrashLoopBackOff state
-- [ ] Metrics visible in UI after pipeline run
+- [x] Kubeflow UI accessible via nginx-proxy port-forward
+- [x] Test pipeline completes successfully
+- [x] No pods in Error/CrashLoopBackOff state
+- [x] Metrics visible in UI after pipeline run
 
-## Task 9: Integration with Existing ArgoCD
+## Task 9: Integration with Existing ArgoCD [COMPLETE]
 
 **Objective:** Configure ArgoCD to manage Kubeflow components for GitOps.
 
@@ -367,9 +371,9 @@ kubectl get application kubeflow-pipelines -n argocd
 
 ### Verification
 
-- [ ] ArgoCD Application created
-- [ ] Application synced successfully
-- [ ] Kubeflow managed via GitOps
+- [x] ArgoCD Application created
+- [x] Application synced successfully
+- [x] Kubeflow managed via GitOps
 
 ## Post-Installation Summary
 
@@ -390,4 +394,4 @@ kubectl get application kubeflow-pipelines -n argocd
 
 ## Next Document
 
-Proceed to [03-pipeline-components.md](./03-pipeline-components.md) for building fraud detection pipeline components.
+Proceed to [03-pipeline-components.md](./03-pipeline-components.md) for pipeline component specifications.

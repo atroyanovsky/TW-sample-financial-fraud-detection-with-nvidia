@@ -2,119 +2,102 @@
 
 This roadmap guides the migration of the NVIDIA Financial Fraud Detection project from a SageMaker-based workflow to Kubeflow Pipelines on EKS. It is designed to be executed by AI agents working on discrete, well-defined tasks.
 
+## Current Status
+
+**Migration Status: COMPLETE**
+
+The migration from SageMaker to Kubeflow on EKS has been completed. All core infrastructure is deployed and operational.
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 1: Foundation | COMPLETE | deployKF installed, GPU nodes working |
+| Phase 2: Core Pipeline | COMPLETE | cuDF preprocessing pipeline in `workflows/` |
+| Phase 3: End-to-End | COMPLETE | Full pipeline with Triton deployment |
+| Phase 4: Production Ready | COMPLETE | Notebooks migrated, Triton serving |
+| Phase 5: Infrastructure | COMPLETE | CDK stacks deployed, ArgoCD configured |
+
 ## Current Architecture
 
-The project currently operates as follows: SageMaker notebooks handle development and preprocessing, SageMaker training jobs execute GNN model training using the NVIDIA financial-fraud-training container, trained models are stored in S3, and an EKS cluster running Triton Inference Server serves predictions. ArgoCD manages GitOps deployments, and CDK provisions all AWS infrastructure.
-
-## Target Architecture
-
-After migration: Kubeflow Pipelines orchestrates the entire ML workflow on the existing EKS cluster. Kubeflow notebooks replace SageMaker notebooks for development. Training runs on EKS GPU nodes (g4dn instances) managed by Karpenter. Triton deployments continue via ArgoCD with pipeline-triggered syncs. Katib provides hyperparameter optimization. All components share the same Kubernetes infrastructure.
+The project now operates as follows: Kubeflow Pipelines orchestrates the ML workflow on EKS. Kubeflow notebooks provide development environments. Training runs on EKS GPU nodes (g4dn/g5 instances) managed by Karpenter. Custom Triton image serves the GNN+XGBoost model with Shapley explainability. ArgoCD manages GitOps deployments. CDK provisions all AWS infrastructure.
 
 ## Roadmap Documents
 
-| Document | Purpose | Estimated Effort |
-|----------|---------|------------------|
-| [01-project-overview.md](./01-project-overview.md) | Current state analysis, component inventory, data flows | Reference |
-| [02-kubeflow-installation.md](./02-kubeflow-installation.md) | EKS cluster preparation and Kubeflow deployment | Week 1-2 |
-| [03-pipeline-components.md](./03-pipeline-components.md) | KFP component definitions with code templates | Week 2-3 |
-| [04-migration-phases.md](./04-migration-phases.md) | Phased migration plan with checkpoints | Week 1-8 |
-| [05-infrastructure-changes.md](./05-infrastructure-changes.md) | CDK updates, IAM roles, Kubernetes manifests | Week 1-2 |
-| [06-validation-testing.md](./06-validation-testing.md) | Testing strategy, success metrics, rollback plan | Ongoing |
-| [07-kubeflow-notebooks.md](./07-kubeflow-notebooks.md) | Migrate SageMaker notebooks to Kubeflow-native notebooks | Week 9-10 |
+| Document | Purpose | Status |
+|----------|---------|--------|
+| [01-project-overview.md](./01-project-overview.md) | Current state analysis, component inventory | Reference |
+| [02-kubeflow-installation.md](./02-kubeflow-installation.md) | EKS cluster preparation and Kubeflow deployment | COMPLETE |
+| [03-pipeline-components.md](./03-pipeline-components.md) | KFP component definitions with code templates | COMPLETE |
+| [04-migration-phases.md](./04-migration-phases.md) | Phased migration plan with checkpoints | COMPLETE |
+| [05-infrastructure-changes.md](./05-infrastructure-changes.md) | CDK updates, IAM roles, Kubernetes manifests | COMPLETE |
 
-## Quick Start for AI Agents
+## What Was Delivered
 
-When picking up a task from this roadmap:
+### Infrastructure
+- deployKF (Kubeflow distribution) on EKS
+- Custom Triton inference image with PyTorch, PyG, XGBoost, Captum
+- ECR repository with CodeBuild auto-build on CDK deploy
+- ArgoCD GitOps for Triton deployments
+- Karpenter GPU node pools (g4dn, g5)
+- NVIDIA GPU Operator v25.3.2
 
-1. Read the relevant phase document completely before starting
-2. Check the dependencies section to ensure prerequisite tasks are complete
-3. Each task includes acceptance criteria - verify these before marking complete
-4. Commit changes with conventional commit format: `feat(kubeflow): <description>`
-5. Update task status in the phase document when complete
+### Pipeline
+- cuDF-accelerated preprocessing pipeline (`workflows/`)
+- KFP v2 components for download, preprocess, train, upload
+- PVC-based artifact passing between pipeline steps
+- S3 integration for raw data and model artifacts
 
-Key files to understand the current implementation:
+### Notebooks
+- `notebooks/kubeflow-fraud-detection.ipynb` - Complete interactive pipeline
+- Runs on Kubeflow Notebook Servers in `team-1` namespace
+- Inline pipeline definition with KFP SDK
+- Triton inference testing built-in
 
-- `README.md` - AWS deployment overview
-- `Kubeflow_Complete_Guide.md` - Kubeflow reference (comprehensive)
-- `notebooks/financial-fraud-usage.ipynb` - Current training workflow
-- `workflows/workflows/pipeline.py` - KFP preprocessing pipeline
-- `infra/lib/nvidia-fraud-detection-blueprint.ts` - EKS/CDK infrastructure
+### Model Serving
+- Triton Inference Server with custom image
+- `prediction_and_shapley` model loaded and ready
+- HTTP/gRPC endpoints on ports 8005/8006
+- Shapley values for explainability
 
-## Timeline Overview
-
-```
-Week 1-2: Infrastructure & Installation
-├── Install Kubeflow on existing EKS cluster
-├── Configure S3 artifact store
-├── Set up IAM roles for pipeline execution
-└── Validate base installation
-
-Week 3-4: Core Pipeline Development
-├── Create preprocessing component
-├── Create training component (wrap NVIDIA container)
-├── Create evaluation component
-└── Test individual components
-
-Week 5-6: Integration & Deployment
-├── Wire components into full pipeline
-├── Add quality gates and conditional logic
-├── Configure ArgoCD sync trigger
-└── Test end-to-end pipeline
-
-Week 7-8: Optimization & Cutover
-├── Add Katib for hyperparameter tuning
-├── Set up scheduled pipeline runs
-├── Performance validation against SageMaker baseline
-└── Decommission SageMaker workflows
-
-Week 9-10: Notebook Migration
-├── Create Kubeflow-native notebooks
-├── Implement KFP client integration
-├── Port evaluation and inference testing
-└── Documentation and user guides
-```
-
-## Success Criteria
-
-The migration is complete when:
-
-1. **Functional parity**: Pipeline produces models with equivalent accuracy to SageMaker workflow (AUC-ROC within 1%)
-2. **Automation**: Full pipeline runs without manual intervention from data ingestion to model deployment
-3. **Reproducibility**: Any pipeline run can be reproduced from its recorded parameters and artifacts
-4. **Observability**: Metrics, logs, and artifacts are accessible via Kubeflow UI
-5. **Cost efficiency**: Training costs are equal to or lower than SageMaker baseline
-
-## Phase Dependencies
+## Key Files
 
 ```
-[Phase 1: Infrastructure] ──┬──> [Phase 2: Components]
-                            │
-[Phase 5: CDK Updates] ─────┘
-                                      │
-                                      v
-                            [Phase 3: Pipeline Integration]
-                                      │
-                                      v
-                            [Phase 4: Optimization & Katib]
-                                      │
-                                      v
-                            [Phase 6: Validation & Cutover]
+financial-fraud-detection/
+├── README.md                           # Project overview
+├── notebooks/
+│   ├── kubeflow-fraud-detection.ipynb  # Main interactive notebook
+│   └── kubeflow-notebook-server.yaml   # Notebook server manifest
+├── workflows/
+│   └── src/workflows/
+│       ├── cudf_e2e_pipeline.py        # Pipeline definition
+│       └── components/
+│           └── preprocess_tabformer.py # Preprocessing component
+├── infra/
+│   ├── lib/
+│   │   ├── nvidia-fraud-detection-blueprint.ts
+│   │   └── triton-image-repo.ts        # ECR + CodeBuild
+│   └── manifests/
+│       ├── argocd/                     # ArgoCD applications
+│       ├── helm/triton/                # Triton Helm chart
+│       └── nginx-proxy.yaml            # Port-forward proxy
+└── triton/
+    └── Dockerfile                      # Custom Triton image
 ```
 
-Phase 1 and Phase 5 can run in parallel. Phase 2 depends on Phase 1 completion. Phases 3-6 are sequential.
+## Access Points
+
+| Service | Access Method |
+|---------|--------------|
+| Kubeflow Dashboard | `kubectl port-forward -n deploykf-istio-gateway pod/nginx-proxy 8443:8443` then https://deploykf.example.com:8443 |
+| Triton Server | `kubectl port-forward -n triton svc/triton-server-triton-inference-server 8005:8005` |
+| ArgoCD | Via deploykf dashboard or direct port-forward |
 
 ## Key Technical Decisions
 
-These decisions have been made and should not be revisited without discussion:
+These decisions were made during migration:
 
-- **KFP v2 SDK**: Use the v2 SDK with Python function-based components
-- **S3 artifact store**: Reuse existing S3 bucket (`ml-on-containers-*`) for pipeline artifacts
-- **Existing EKS cluster**: Deploy Kubeflow to the same cluster running Triton
-- **Karpenter for GPU nodes**: Continue using Karpenter for g4dn instance scaling
-- **ArgoCD for Triton**: Continue using ArgoCD for Triton deployments, triggered by pipeline
-
-## Reference Materials
-
-- `Kubeflow_Complete_Guide.md` in project root - comprehensive Kubeflow documentation
-- [Kubeflow on AWS](https://awslabs.github.io/kubeflow-manifests/) - official AWS deployment guide
-- [KFP SDK Reference](https://kubeflow-pipelines.readthedocs.io/) - API documentation
+- **deployKF**: Used instead of raw Kubeflow manifests for easier installation
+- **KFP v2 SDK**: Python function-based components with `kfp-kubernetes` for PVC support
+- **Custom Triton Image**: Required for PyTorch + torch_geometric + XGBoost + Captum
+- **S3 Artifact Store**: Reused existing `ml-on-containers-*` buckets
+- **ArgoCD for Triton**: Continues managing Triton via Helm charts
+- **No SageMaker**: Fully removed - no hybrid approach

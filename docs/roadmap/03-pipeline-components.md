@@ -1,6 +1,10 @@
 # 03 - Pipeline Components Specification
 
+**STATUS: COMPLETE**
+
 This document defines the Kubeflow pipeline components for migrating the NVIDIA Financial Fraud Detection workflow. Each component is implementation-ready using the KFP v2 SDK.
+
+> Note: The actual implementation uses cuDF-accelerated preprocessing in `workflows/src/workflows/` and the interactive notebook in `notebooks/kubeflow-fraud-detection.ipynb`. The specifications below served as the design reference.
 
 ## Pipeline Architecture
 
@@ -468,12 +472,19 @@ if __name__ == "__main__":
 
 ## Implementation Checklist
 
-- [ ] Create `pipelines/` directory
-- [ ] Create `pipelines/components/` for component files
-- [ ] Implement each component
-- [ ] Create full pipeline definition
-- [ ] Compile and test pipeline
-- [ ] Set up recurring runs
+- [x] Create `workflows/` directory
+- [x] Create `workflows/src/workflows/components/` for component files
+- [x] Implement each component (cuDF-based preprocessing)
+- [x] Create full pipeline definition
+- [x] Compile and test pipeline
+- [ ] Set up recurring runs (optional, not yet configured)
+
+## Implementation
+
+The actual implementation is in:
+- `workflows/src/workflows/cudf_e2e_pipeline.py` - Pipeline definition
+- `workflows/src/workflows/components/preprocess_tabformer.py` - Preprocessing component
+- `notebooks/kubeflow-fraud-detection.ipynb` - Interactive notebook with all components inline
 
 ## Next Document
 

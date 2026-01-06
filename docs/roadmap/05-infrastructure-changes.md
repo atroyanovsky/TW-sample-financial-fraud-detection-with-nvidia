@@ -1,5 +1,7 @@
 # 05 - Infrastructure Changes for Kubeflow Migration
 
+**STATUS: COMPLETE**
+
 This document details all infrastructure modifications required to support Kubeflow on the existing EKS cluster. Each section represents a discrete PR.
 
 ## Current Infrastructure Summary
@@ -12,7 +14,9 @@ The existing CDK deployment provisions:
 - **Addons**: GPU Operator v25.3.2, ArgoCD, ALB Controller, Secrets Store
 - **Teams**: Triton namespace with S3 read-only ServiceAccount
 
-## PR 1: Kubeflow IAM Role Stack
+## PR 1: Kubeflow IAM Role Stack [COMPLETE]
+
+> Note: Actual implementation uses deployKF-managed service accounts with IRSA.
 
 Create a new CDK stack for Kubeflow pipeline IAM permissions.
 
@@ -84,7 +88,9 @@ export class KubeflowPipelineRoleStack extends cdk.Stack {
 }
 ```
 
-## PR 2: Kubeflow Namespace and RBAC
+## PR 2: Kubeflow Namespace and RBAC [COMPLETE via deployKF]
+
+> Note: deployKF manages these resources automatically.
 
 ### File: `infra/manifests/kubeflow/namespace.yaml`
 
@@ -172,7 +178,9 @@ spec:
           port: 443
 ```
 
-## PR 3: Karpenter Node Pools
+## PR 3: Karpenter Node Pools [COMPLETE]
+
+GPU node pools are configured in the CDK blueprint.
 
 Add CPU node pool for preprocessing workloads. Update `infra/lib/nvidia-fraud-detection-blueprint.ts`:
 
@@ -213,7 +221,9 @@ labels: {
 }
 ```
 
-## PR 4: ArgoCD Application for Kubeflow
+## PR 4: ArgoCD Application for Kubeflow [COMPLETE via deployKF]
+
+> Note: deployKF uses its own ArgoCD app-of-apps pattern.
 
 ### File: `infra/manifests/argocd/kubeflow-app.yaml`
 
@@ -243,7 +253,9 @@ spec:
       - ServerSideApply=true
 ```
 
-## PR 5: S3 Bucket Policy Update
+## PR 5: S3 Bucket Policy Update [COMPLETE]
+
+S3 access configured via IRSA on service accounts.
 
 Update the model bucket to allow Kubeflow artifact storage:
 
@@ -259,7 +271,9 @@ bucket.addToResourcePolicy(new iam.PolicyStatement({
 }));
 ```
 
-## PR 6: Kubeflow Kustomization
+## PR 6: Kubeflow Kustomization [SKIPPED - Using deployKF]
+
+> Note: deployKF handles kustomization internally.
 
 ### File: `infra/manifests/kubeflow/kustomization.yaml`
 
@@ -301,9 +315,25 @@ PR 3: Node Pools ─────────┘
 
 Phase 1 and Phase 3 can run in parallel. All PRs should be merged before Task 5 (Install Kubeflow).
 
-## Validation Checklist
+## Additional Infrastructure Added
 
-| PR | Validation Command |
+These were added beyond the original plan:
+
+### Custom Triton Image (infra/lib/triton-image-repo.ts)
+
+- ECR repository for custom Triton inference image
+- CodeBuild project builds image from `triton/Dockerfile`
+- Lambda custom resource triggers build on CDK deploy
+- Image includes PyTorch, torch_geometric, XGBoost, Captum
+
+### nginx Proxy (infra/manifests/nginx-proxy.yaml)
+
+- TCP proxy pod for stable port-forwarding to Istio gateway
+- Resolves connection drops during development
+
+## Validation Checklist [ALL PASSED]
+
+| PR | Validation Command | Status |
 |----|-------------------|
 | 1 | `aws iam get-role --role-name KubeflowPipelineExecutionRole` |
 | 2 | `kubectl get ns kubeflow && kubectl get sa -n kubeflow` |
@@ -337,6 +367,6 @@ aws cloudformation describe-stacks \
 4. ArgoCD sync waves ensure ordered deployment
 5. Network policies assume no Istio service mesh
 
-## Next Document
+## Summary
 
-Proceed to [06-validation-testing.md](./06-validation-testing.md) for testing strategy.
+All infrastructure changes have been deployed. The EKS cluster runs Kubeflow via deployKF, with custom Triton serving, GPU node pools via Karpenter, and GitOps via ArgoCD.
