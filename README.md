@@ -64,11 +64,11 @@ The dashboard gives you access to pipelines, experiments, runs, and notebook ser
 
 ## Running Your First Pipeline
 
-The easiest path is the interactive notebook. Navigate to Notebooks in the sidebar and create a new notebook server in the `team-1` namespace using the `kubeflownotebookswg/jupyter-pytorch-cuda:v1.9.2` image.
+The easiest path is the interactive notebook. A notebook server called `fraud-detection-demo` is automatically provisioned in the `team-1` namespace when the infrastructure deploys. Navigate to Notebooks in the sidebar to access it.
 
 ![Notebook Servers](docs/img/deployKF-notebook-page.png)
 
-Once the notebook server starts, upload `notebooks/kubeflow-fraud-detection.ipynb` or clone this repository directly into the notebook environment. The notebook is self-contained: it defines all pipeline components inline, submits runs to the Kubeflow API, and includes cells for monitoring progress and testing inference.
+The notebook workspace comes pre-loaded with this repository, so you can immediately open `fraud-detection/notebooks/kubeflow-fraud-detection.ipynb`. The notebook is self-contained: it defines all pipeline components inline, submits runs to the Kubeflow API, and includes cells for monitoring progress and testing inference.
 
 Run through the notebook section by section:
 

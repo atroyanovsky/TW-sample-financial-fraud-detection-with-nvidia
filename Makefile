@@ -29,35 +29,34 @@ GREEN := \033[0;32m
 RED := \033[0;31m
 NC := \033[0m
 
-.PHONY: help check-deps deploy destroy kubeconfig dashboard notebook-apply \
+.PHONY: help check-deps deploy destroy kubeconfig dashboard \
         pipeline-compile pipeline-upload triton-status triton-models triton-build clean
 
 help:
-	@echo "$(YELLOW)GNN based financial fraud detection - Kubeflow on EKS$(NC)"
+	@echo "$(YELLOW)NVIDIA Financial Fraud Detection - Kubeflow on EKS$(NC)"
 	@echo ""
 	@echo "$(GREEN)Infrastructure:$(NC)"
-	@echo "  deploy             : Deploy all CDK stacks (EKS, Kubeflow, Triton)"
-	@echo "  destroy            : Tear down all infrastructure"
-	@echo "  kubeconfig         : Update kubeconfig for the cluster"
+	@echo "  deploy             Deploy all CDK stacks (EKS, Kubeflow, Triton)"
+	@echo "  destroy            Tear down all infrastructure"
+	@echo "  kubeconfig         Update kubeconfig for the cluster"
 	@echo ""
 	@echo "$(GREEN)Kubeflow:$(NC)"
-	@echo "  dashboard          : Get Kubeflow dashboard URL"
-	@echo "  notebook-apply     : Deploy the Kubeflow notebook server"
-	@echo "  pipeline-compile   : Compile the fraud detection pipeline"
-	@echo "  pipeline-upload    : Upload compiled pipeline to Kubeflow"
+	@echo "  dashboard          Get Kubeflow dashboard URL"
+	@echo "  pipeline-compile   Compile the fraud detection pipeline"
+	@echo "  pipeline-upload    Upload compiled pipeline to Kubeflow"
 	@echo ""
 	@echo "$(GREEN)Triton:$(NC)"
-	@echo "  triton-status      : Check Triton Inference Server status"
-	@echo "  triton-models      : List loaded models"
-	@echo "  triton-build       : Trigger Triton image rebuild"
+	@echo "  triton-status      Check Triton Inference Server status"
+	@echo "  triton-models      List loaded models"
+	@echo "  triton-build       Trigger Triton image rebuild"
 	@echo ""
 	@echo "$(GREEN)Development:$(NC)"
-	@echo "  check-deps         : Verify required tools are installed"
-	@echo "  clean              : Clean up local artifacts"
+	@echo "  check-deps         Verify required tools are installed"
+	@echo "  clean              Clean up local artifacts"
 	@echo ""
 	@echo "$(YELLOW)Configuration:$(NC)"
 	@echo "  AWS_REGION=$(AWS_REGION)"
-	@echo "  Python tooling: $(if $(UV),uv,pip)"
+	@echo "  Python: $(if $(UV),uv,pip)"
 	@echo ""
 	@echo "$(YELLOW)Example:$(NC)"
 	@echo "  make deploy AWS_REGION=us-west-2"
@@ -110,11 +109,6 @@ dashboard:
 		|| echo "Load balancer not ready"
 	@echo ""
 	@echo "Default credentials: user@example.com / user"
-
-notebook-apply:
-	@echo "$(YELLOW)Deploying Kubeflow notebook server...$(NC)"
-	kubectl apply -f notebooks/kubeflow-notebook-server.yaml
-	@echo "$(GREEN)Notebook server deployed to $(KF_NAMESPACE)$(NC)"
 
 pipeline-compile:
 	@echo "$(YELLOW)Compiling fraud detection pipeline...$(NC)"
