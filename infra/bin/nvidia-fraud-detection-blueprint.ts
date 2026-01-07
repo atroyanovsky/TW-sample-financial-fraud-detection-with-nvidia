@@ -11,6 +11,9 @@ const env = {
   region: process.env.CDK_DEFAULT_REGION,
 };
 
+const ngcSecretName = app.node.tryGetContext('ngcSecretName') || 'ngc-api-key';
+const hostname = app.node.tryGetContext('hostname');
+
 const modelBucketName = "ml-on-containers-" + process.env.CDK_DEFAULT_ACCOUNT;
 const kfBucketName = "kubeflow-pipelines-" + process.env.CDK_DEFAULT_ACCOUNT;
 const dataBucketName = modelBucketName;
@@ -49,6 +52,8 @@ const mainStack = new NvidiaFraudDetectionBlueprint(
     dataBucketName: dataBucketName,
     modelRegistryBucketName: modelRegistryBucketName,
     tritonImageUri: `${tritonImageRepo.repositoryUri}:latest`,
+    hostname: hostname,
+    ngcSecretName: ngcSecretName,
   },
 );
 

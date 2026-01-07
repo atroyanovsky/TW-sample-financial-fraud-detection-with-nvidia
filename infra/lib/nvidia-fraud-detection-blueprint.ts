@@ -8,7 +8,6 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import { KfAddon } from "./kf-addon";
 import { argoCdValues } from './argocd-values';
 import { NodePoolAddon } from './nodepool-addon';
-import * as sm from 'aws-cdk-lib/aws-secretsmanager'
 
 export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
   /**
@@ -33,7 +32,15 @@ export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
    */
   tritonImageUri: string;
 
+  /**
+   * The name of the NGC API Key Secret in SecretsManager
+   */
   ngcSecretName: string;
+
+  /**
+   * The hostname in route53
+   */
+  hostname: string;
 
 }
 
@@ -62,6 +69,8 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       enforceSSL: true,
       encryption: s3.BucketEncryption.S3_MANAGED
     });
+
+    const hostedZoneProvider = new blueprints.LookupHostedZoneProvider(props.hostname);
 
     const g4dnNodePoolSpec: blueprints.NodePoolV1Spec = {
       labels: {
@@ -194,6 +203,10 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       }),
       new blueprints.addons.SecretsStoreAddOn(),
       new blueprints.addons.ExternalsSecretsAddOn(),
+      new blueprints.addons.ExternalDnsAddOn({
+        hostedZoneResources: [blueprints.GlobalResources.HostedZone],
+        sources: ["istio-gateway"]
+      }),
       new blueprints.addons.EbsCsiDriverAddOn({ storageClass: "gp3" }),
       new blueprints.addons.ArgoCDAddOn({
         bootstrapRepo: {
@@ -222,6 +235,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
         bucketName: props.kubeflowBucketName,
         dataBucketName: props.dataBucketName,
         modelBucketName: props.modelRegistryBucketName,
+        hostname: props.hostname
       })
     ];
 
@@ -235,6 +249,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       )
       .teams(triton)
       .resourceProvider(blueprints.GlobalResources.Vpc, new blueprints.DirectVpcProvider(vpc))
+      .resourceProvider(blueprints.GlobalResources.HostedZone, hostedZoneProvider)
       .clusterProvider(new blueprints.MngClusterProvider({
         amiType: eks.NodegroupAmiType.AL2023_X86_64_STANDARD,
         minSize: 2,
