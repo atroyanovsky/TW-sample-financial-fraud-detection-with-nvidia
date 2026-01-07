@@ -15,7 +15,7 @@ spec:
           region: {{ .Values.region }}
         ngc:
           secretName: {{.Values.ngcSecretName}}
-          secretProperty: apiKey
+          secretProperty: api-key
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ .Values.namespace }}
