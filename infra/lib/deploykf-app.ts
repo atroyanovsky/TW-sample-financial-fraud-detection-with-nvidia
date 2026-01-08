@@ -110,7 +110,7 @@ deploykf_core:
       annotations:
         service.beta.kubernetes.io/aws-load-balancer-type: "external"
         service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
-        service.beta.kubernetes.io/aws-load-balancer-scheme: "external"
+        service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
       ports:
         http: 80
         https: 443

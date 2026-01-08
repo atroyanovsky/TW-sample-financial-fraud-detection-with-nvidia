@@ -278,7 +278,7 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
         bucketName: props.kubeflowBucketName,
         dataBucketName: props.dataBucketName,
         modelBucketName: props.modelRegistryBucketName,
-        hostname: props.domainFilter + "." + props.hostname,
+        hostname: props.domainFilter,
       }),
     ];
 
