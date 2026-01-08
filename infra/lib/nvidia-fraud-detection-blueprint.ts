@@ -42,6 +42,11 @@ export interface NvidiaFraudDetectionBlueprintProps extends cdk.StackProps {
    */
   hostname: string;
 
+  /**
+   * Subdomain filter for ExternalDNS (only manages this subdomain)
+   */
+  domainFilter?: string;
+
 }
 
 export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
@@ -205,7 +210,10 @@ export class NvidiaFraudDetectionBlueprint extends cdk.Stack {
       new blueprints.addons.ExternalsSecretsAddOn(),
       new blueprints.addons.ExternalDnsAddOn({
         hostedZoneResources: [blueprints.GlobalResources.HostedZone],
-        sources: ["istio-gateway"]
+        sources: ["istio-gateway"],
+        values: {
+          domainFilters: props.domainFilter ? [props.domainFilter] : []
+        }
       }),
       new blueprints.addons.EbsCsiDriverAddOn({ storageClass: "gp3" }),
       new blueprints.addons.ArgoCDAddOn({
