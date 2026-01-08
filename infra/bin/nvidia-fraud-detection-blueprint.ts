@@ -1,6 +1,5 @@
 import * as cdk from "aws-cdk-lib";
 import { NvidiaFraudDetectionBlueprint } from "../lib/nvidia-fraud-detection-blueprint";
-import { TarExtractorStack } from "../lib/tar-extractor-stack";
 import { BlueprintECRStack } from "../lib/training-image-repo";
 import { TritonImageRepoStack } from "../lib/triton-image-repo";
 
@@ -19,15 +18,6 @@ const modelBucketName = "ml-on-containers-" + process.env.CDK_DEFAULT_ACCOUNT;
 const kfBucketName = "kubeflow-pipelines-" + process.env.CDK_DEFAULT_ACCOUNT;
 const dataBucketName = modelBucketName;
 const modelRegistryBucketName = modelBucketName + "-model-registry";
-
-const tarExtractorStack = new TarExtractorStack(
-  app,
-  "NvidiaFraudDetectionBlueprintModelExtractor",
-  {
-    env: env,
-    modelBucketName: modelBucketName,
-  },
-);
 
 const trainingImageRepo = new BlueprintECRStack(
   app,
@@ -61,4 +51,3 @@ const mainStack = new NvidiaFraudDetectionBlueprint(
 
 mainStack.addDependency(trainingImageRepo);
 mainStack.addDependency(tritonImageRepo);
-mainStack.addDependency(tarExtractorStack);
