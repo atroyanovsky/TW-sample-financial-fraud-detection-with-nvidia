@@ -12,7 +12,7 @@ const env = {
 
 const ngcSecretName = app.node.tryGetContext("ngcSecretName") || "ngc-api-key";
 const hostname = app.node.tryGetContext("hostname");
-const domainFilter = app.node.tryGetContext("subdomain") || "kf";
+const domainFilter = app.node.tryGetContext("subdomain");
 
 const modelBucketName = "ml-on-containers-" + process.env.CDK_DEFAULT_ACCOUNT;
 const kfBucketName = "kubeflow-pipelines-" + process.env.CDK_DEFAULT_ACCOUNT;
