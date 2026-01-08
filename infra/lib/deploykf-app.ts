@@ -1,4 +1,9 @@
-export const deployKfApp = (bucket: string, region: string, roleArn: string, hostname: string) => {
+export const deployKfApp = (
+  bucket: string,
+  region: string,
+  roleArn: string,
+  hostname: string,
+) => {
   return {
     apiVersion: "argoproj.io/v1alpha1",
     kind: "Application",
@@ -7,8 +12,8 @@ export const deployKfApp = (bucket: string, region: string, roleArn: string, hos
       namespace: "argocd",
       labels: {
         "app.kubernetes.io/name": "deploykf-app-of-apps",
-        "app.kubernetes.io/part-of": "deploykf"
-      }
+        "app.kubernetes.io/part-of": "deploykf",
+      },
     },
     spec: {
       project: "default",
@@ -21,11 +26,11 @@ export const deployKfApp = (bucket: string, region: string, roleArn: string, hos
           parameters: [
             {
               name: "source_version",
-              string: "0.1.5"
+              string: "0.1.5",
             },
             {
               name: "values_files",
-              array: ["./sample-values.yaml"]
+              array: ["./sample-values.yaml"],
             },
             {
               name: "values",
@@ -105,7 +110,7 @@ deploykf_core:
       annotations:
         service.beta.kubernetes.io/aws-load-balancer-type: "external"
         service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
-        service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+        service.beta.kubernetes.io/aws-load-balancer-scheme: "external"
       ports:
         http: 80
         https: 443
@@ -163,14 +168,14 @@ kubeflow_tools:
     serviceAccounts:
       apiServer:
         annotations:
-          eks.amazonaws.com/role-arn: ${roleArn} 
+          eks.amazonaws.com/role-arn: ${roleArn}
       frontend:
         annotations:
-          eks.amazonaws.com/role-arn: ${roleArn} 
+          eks.amazonaws.com/role-arn: ${roleArn}
 
     bucket:
-      name: ${bucket} 
-      region: ${region} 
+      name: ${bucket}
+      region: ${region}
 
     objectStore:
       useExternal: true
@@ -183,20 +188,19 @@ kubeflow_dependencies:
     controller:
       serviceAccount:
         annotations:
-          eks.amazonaws.com/role-arn: ${roleArn} 
+          eks.amazonaws.com/role-arn: ${roleArn}
     server:
       serviceAccount:
         annotations:
-          eks.amazonaws.com/role-arn: ${roleArn}`
-            }
-          ]
-        }
+          eks.amazonaws.com/role-arn: ${roleArn}`,
+            },
+          ],
+        },
       },
       destination: {
         server: "https://kubernetes.default.svc",
-        namespace: "argocd"
-      }
-    }
-  }
-}
-
+        namespace: "argocd",
+      },
+    },
+  };
+};
