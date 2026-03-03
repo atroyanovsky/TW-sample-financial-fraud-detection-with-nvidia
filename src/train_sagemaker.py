@@ -59,13 +59,17 @@ def setup_cuda_compat():
 def parse_args():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument("--model_kind", type=str, default="GNN_XGBoost")
+
     parser.add_argument("--gnn_hidden_channels", type=int, default=32)
     parser.add_argument("--gnn_n_hops", type=int, default=2)
     parser.add_argument("--gnn_layer", type=str, default="SAGEConv")
     parser.add_argument("--gnn_dropout_prob", type=float, default=0.1)
     parser.add_argument("--gnn_batch_size", type=int, default=4096)
     parser.add_argument("--gnn_fan_out", type=int, default=10)
+    parser.add_argument("--gnn_metric", type=str, default="f1")
     parser.add_argument("--gnn_num_epochs", type=int, default=8)
+    parser.add_argument("--gnn_weight_decay", type=float, default=0.00001)
 
     parser.add_argument("--xgb_max_depth", type=int, default=6)
     parser.add_argument("--xgb_learning_rate", type=float, default=0.2)
@@ -104,7 +108,7 @@ def main():
         "paths": {"data_dir": args.train_dir, "output_dir": str(output_dir)},
         "models": [
             {
-                "kind": "GNN_XGBoost",
+                "kind": args.model_kind,
                 "gpu": "single",
                 "hyperparameters": {
                     "gnn": {
@@ -114,7 +118,9 @@ def main():
                         "dropout_prob": args.gnn_dropout_prob,
                         "batch_size": args.gnn_batch_size,
                         "fan_out": args.gnn_fan_out,
+                        "metric": args.gnn_metric,
                         "num_epochs": args.gnn_num_epochs,
+                        "weight_decay": args.gnn_weight_decay,
                     },
                     "xgb": {
                         "max_depth": args.xgb_max_depth,
