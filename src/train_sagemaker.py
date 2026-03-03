@@ -86,6 +86,14 @@ def parse_args():
         default=os.environ.get("SM_CHANNEL_GNN", "/opt/ml/input/data/gnn"),
     )
 
+    sm_hps = os.environ.get("SM_HPS")
+    if sm_hps:
+        try:
+            parser.set_defaults(**json.loads(sm_hps))
+            print(f"Loaded SM_HPS: {sm_hps}")
+        except json.JSONDecodeError:
+            print("WARNING: Failed to parse SM_HPS; falling back to CLI/default args")
+
     return parser.parse_known_args()
 
 
