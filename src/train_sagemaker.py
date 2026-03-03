@@ -86,13 +86,31 @@ def parse_args():
         default=os.environ.get("SM_CHANNEL_GNN", "/opt/ml/input/data/gnn"),
     )
 
+    raw_hps = None
     sm_hps = os.environ.get("SM_HPS")
     if sm_hps:
+        raw_hps = sm_hps
+    else:
+        hps_file = Path("/opt/ml/input/config/hyperparameters.json")
+        if hps_file.exists():
+            raw_hps = hps_file.read_text()
+
+    if raw_hps:
         try:
-            parser.set_defaults(**json.loads(sm_hps))
-            print(f"Loaded SM_HPS: {sm_hps}")
-        except json.JSONDecodeError:
-            print("WARNING: Failed to parse SM_HPS; falling back to CLI/default args")
+            hps = json.loads(raw_hps)
+            actions_by_dest = {
+                action.dest: action for action in parser._actions if hasattr(action, "dest")
+            }
+            for key, value in list(hps.items()):
+                action = actions_by_dest.get(key)
+                if action and action.type and isinstance(value, str):
+                    hps[key] = action.type(value)
+            parser.set_defaults(**hps)
+            print(f"Loaded SageMaker hyperparameters: {hps}")
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+            print(
+                f"WARNING: Failed to parse/convert SageMaker hyperparameters ({exc}); falling back to CLI/default args"
+            )
 
     return parser.parse_known_args()
 
