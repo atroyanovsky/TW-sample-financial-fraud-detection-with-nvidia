@@ -86,31 +86,23 @@ def parse_args():
         default=os.environ.get("SM_CHANNEL_GNN", "/opt/ml/input/data/gnn"),
     )
 
-    raw_hps = None
-    sm_hps = os.environ.get("SM_HPS")
-    if sm_hps:
-        raw_hps = sm_hps
-    else:
-        hps_file = Path("/opt/ml/input/config/hyperparameters.json")
-        if hps_file.exists():
-            raw_hps = hps_file.read_text()
-
-    if raw_hps:
+    # Load hyperparameters from SageMaker config file (standard pattern)
+    # See: https://docs.aws.amazon.com/sagemaker/latest/dg/build-and-manage-parameters.html
+    hps_file = Path("/opt/ml/input/config/hyperparameters.json")
+    if hps_file.exists():
         try:
-            hps = json.loads(raw_hps)
-            actions_by_dest = {
-                action.dest: action for action in parser._actions if hasattr(action, "dest")
+            hps = json.loads(hps_file.read_text())
+            # SageMaker stores all values as strings; coerce to declared types
+            type_map = {
+                a.dest: a.type for a in parser._actions if a.type is not None
             }
-            for key, value in list(hps.items()):
-                action = actions_by_dest.get(key)
-                if action and action.type and isinstance(value, str):
-                    hps[key] = action.type(value)
+            for key in list(hps):
+                if key in type_map:
+                    hps[key] = type_map[key](hps[key])
             parser.set_defaults(**hps)
             print(f"Loaded SageMaker hyperparameters: {hps}")
-        except (json.JSONDecodeError, ValueError, TypeError) as exc:
-            print(
-                f"WARNING: Failed to parse/convert SageMaker hyperparameters ({exc}); falling back to CLI/default args"
-            )
+        except Exception as exc:
+            print(f"WARNING: Failed to load hyperparameters.json ({exc})")
 
     return parser.parse_known_args()
 

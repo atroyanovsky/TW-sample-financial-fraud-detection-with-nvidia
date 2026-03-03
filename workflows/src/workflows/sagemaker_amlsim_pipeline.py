@@ -51,20 +51,25 @@ def get_amlsim_pipeline(
         default_value=f"s3://{default_bucket}/model-repository/amlsim",
     )
 
+    # Model kind
+    model_kind = ParameterString(name="ModelKind", default_value="GNN_XGBoost_NP")
+
     # GNN Hyperparameters
     gnn_hidden_channels = ParameterInteger(name="GnnHiddenChannels", default_value=32)
     gnn_n_hops = ParameterInteger(name="GnnNHops", default_value=2)
-    gnn_layer = ParameterString(name="GnnLayer", default_value="SAGEConv")
-    gnn_dropout_prob = ParameterFloat(name="GnnDropoutProb", default_value=0.1)
+    gnn_layer = ParameterString(name="GnnLayer", default_value="TransformerConv")
+    gnn_dropout_prob = ParameterFloat(name="GnnDropoutProb", default_value=0.2)
     gnn_batch_size = ParameterInteger(name="GnnBatchSize", default_value=4096)
-    gnn_fan_out = ParameterInteger(name="GnnFanOut", default_value=10)
-    gnn_num_epochs = ParameterInteger(name="GnnNumEpochs", default_value=8)
+    gnn_fan_out = ParameterInteger(name="GnnFanOut", default_value=8)
+    gnn_metric = ParameterString(name="GnnMetric", default_value="f1")
+    gnn_num_epochs = ParameterInteger(name="GnnNumEpochs", default_value=10)
+    gnn_weight_decay = ParameterFloat(name="GnnWeightDecay", default_value=0.00001)
 
     # XGBoost Hyperparameters
-    xgb_max_depth = ParameterInteger(name="XgbMaxDepth", default_value=6)
-    xgb_learning_rate = ParameterFloat(name="XgbLearningRate", default_value=0.2)
-    xgb_num_parallel_tree = ParameterInteger(name="XgbNumParallelTree", default_value=3)
-    xgb_num_boost_round = ParameterInteger(name="XgbNumBoostRound", default_value=512)
+    xgb_max_depth = ParameterInteger(name="XgbMaxDepth", default_value=3)
+    xgb_learning_rate = ParameterFloat(name="XgbLearningRate", default_value=0.1)
+    xgb_num_parallel_tree = ParameterInteger(name="XgbNumParallelTree", default_value=50)
+    xgb_num_boost_round = ParameterInteger(name="XgbNumBoostRound", default_value=100)
     xgb_gamma = ParameterFloat(name="XgbGamma", default_value=0.0)
 
     # Step 1: Training (GNN+XGBoost) directly from AMLSim S3 inputs
@@ -82,21 +87,21 @@ def get_amlsim_pipeline(
         sagemaker_session=pipeline_session,
         role=role_arn,
         hyperparameters={
-            "model_kind": "GNN_XGBoost_NP",
-            "gnn_hidden_channels": 32,
-            "gnn_n_hops": 2,
-            "gnn_layer": "TransformerConv",
-            "gnn_dropout_prob": 0.2,
-            "gnn_batch_size": 4096,
-            "gnn_fan_out": 8,
-            "gnn_metric": "f1",
-            "gnn_num_epochs": 10,
-            "gnn_weight_decay": 0.00001,
-            "xgb_max_depth": 3,
-            "xgb_learning_rate": 0.1,
-            "xgb_num_parallel_tree": 50,
-            "xgb_num_boost_round": 100,
-            "xgb_gamma": 0.0,
+            "model_kind": model_kind,
+            "gnn_hidden_channels": gnn_hidden_channels,
+            "gnn_n_hops": gnn_n_hops,
+            "gnn_layer": gnn_layer,
+            "gnn_dropout_prob": gnn_dropout_prob,
+            "gnn_batch_size": gnn_batch_size,
+            "gnn_fan_out": gnn_fan_out,
+            "gnn_metric": gnn_metric,
+            "gnn_num_epochs": gnn_num_epochs,
+            "gnn_weight_decay": gnn_weight_decay,
+            "xgb_max_depth": xgb_max_depth,
+            "xgb_learning_rate": xgb_learning_rate,
+            "xgb_num_parallel_tree": xgb_num_parallel_tree,
+            "xgb_num_boost_round": xgb_num_boost_round,
+            "xgb_gamma": xgb_gamma,
         },
         input_data_config=[
             InputData(
@@ -168,13 +173,16 @@ def get_amlsim_pipeline(
             training_instance_type,
             gnn_input_s3_uri,
             model_repo_output_uri,
+            model_kind,
             gnn_hidden_channels,
             gnn_n_hops,
             gnn_layer,
             gnn_dropout_prob,
             gnn_batch_size,
             gnn_fan_out,
+            gnn_metric,
             gnn_num_epochs,
+            gnn_weight_decay,
             xgb_max_depth,
             xgb_learning_rate,
             xgb_num_parallel_tree,
