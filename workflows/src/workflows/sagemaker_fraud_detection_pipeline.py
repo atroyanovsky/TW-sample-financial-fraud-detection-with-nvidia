@@ -1,4 +1,5 @@
 import os
+import time
 
 import boto3
 from sagemaker.core.helper.session_helper import Session
@@ -133,13 +134,9 @@ def deploy_endpoint(
 ):
     """Deploy the latest approved model from the model package group."""
     sagemaker_session, _ = get_session(region, default_bucket, profile_name)
-    account_id = sagemaker_session.account_id()
 
-    # Get latest approved model package
-    sm_client = boto3.client(
-        "sagemaker",
-        region_name=region,
-    )
+    # Use the session's boto client so credentials/profile are consistent
+    sm_client = sagemaker_session.boto_session.client("sagemaker")
     response = sm_client.list_model_packages(
         ModelPackageGroupName=model_package_group_name,
         ModelApprovalStatus="Approved",
@@ -157,53 +154,69 @@ def deploy_endpoint(
     model_package_arn = response["ModelPackageSummaryList"][0]["ModelPackageArn"]
     print(f"Deploying model package: {model_package_arn}")
 
+    # Use a timestamp suffix so each deploy creates fresh model/config resources,
+    # avoiding stale resources from previous failed deployments.
+    timestamp = int(time.time())
+    model_name = f"{endpoint_name}-model-{timestamp}"
+    endpoint_config_name = f"{endpoint_name}-config-{timestamp}"
+
     # Create Model from model package
-    model_name = f"{endpoint_name}-model"
-    try:
-        model = Model.create(
-            model_name=model_name,
-            primary_container=ContainerDefinition(model_package_name=model_package_arn),
-            execution_role_arn=role_arn,
-        )
-        print(f"Created model: {model_name}")
-    except Exception as e:
-        if "already existing" in str(e):
-            print(f"Using existing model: {model_name}")
-        else:
-            raise
+    model = Model.create(
+        model_name=model_name,
+        primary_container=ContainerDefinition(model_package_name=model_package_arn),
+        execution_role_arn=role_arn,
+    )
+    print(f"Created model: {model_name}")
 
     # Create EndpointConfig
-    endpoint_config_name = f"{endpoint_name}-config"
+    endpoint_config = EndpointConfig.create(
+        endpoint_config_name=endpoint_config_name,
+        production_variants=[
+            ProductionVariant(
+                variant_name="AllTraffic",
+                model_name=model_name,
+                initial_instance_count=initial_instance_count,
+                instance_type=instance_type,
+            )
+        ],
+    )
+    print(f"Created endpoint config: {endpoint_config_name}")
+
+    # Create or update Endpoint
+    # If a failed endpoint exists it must be deleted before recreating —
+    # update_endpoint is not allowed on a Failed endpoint.
     try:
-        endpoint_config = EndpointConfig.create(
-            endpoint_config_name=endpoint_config_name,
-            production_variants=[
-                ProductionVariant(
-                    variant_name="AllTraffic",
-                    model_name=model_name,
-                    initial_instance_count=initial_instance_count,
-                    instance_type=instance_type,
-                )
-            ],
-        )
-        print(f"Created endpoint config: {endpoint_config_name}")
-    except Exception as e:
-        if "already existing" in str(e):
-            print(f"Using existing endpoint config: {endpoint_config_name}")
+        existing = sm_client.describe_endpoint(EndpointName=endpoint_name)
+        existing_status = existing["EndpointStatus"]
+        if existing_status == "Failed":
+            print(f"Deleting failed endpoint: {endpoint_name}")
+            sm_client.delete_endpoint(EndpointName=endpoint_name)
+            waiter = sm_client.get_waiter("endpoint_deleted")
+            waiter.wait(EndpointName=endpoint_name)
+            raise Exception("deleted")  # fall through to create
+        else:
+            print(f"Updating existing endpoint: {endpoint_name}")
+            sm_client.update_endpoint(
+                EndpointName=endpoint_name,
+                EndpointConfigName=endpoint_config_name,
+            )
+            endpoint = Endpoint.get(endpoint_name=endpoint_name)
+    except sm_client.exceptions.ClientError as e:
+        if e.response["Error"]["Code"] == "ValidationException" and "Could not find endpoint" in str(e):
+            endpoint = Endpoint.create(
+                endpoint_name=endpoint_name,
+                endpoint_config_name=endpoint_config_name,
+            )
+            print(f"Creating endpoint: {endpoint_name}")
         else:
             raise
-
-    # Create Endpoint
-    try:
-        endpoint = Endpoint.create(
-            endpoint_name=endpoint_name,
-            endpoint_config_name=endpoint_config_name,
-        )
-        print(f"Creating endpoint: {endpoint_name}")
     except Exception as e:
-        if "already existing" in str(e):
-            print(f"Using existing endpoint: {endpoint_name}")
-            endpoint = Endpoint.get(endpoint_name=endpoint_name)
+        if "deleted" in str(e):
+            endpoint = Endpoint.create(
+                endpoint_name=endpoint_name,
+                endpoint_config_name=endpoint_config_name,
+            )
+            print(f"Creating endpoint: {endpoint_name}")
         else:
             raise
 

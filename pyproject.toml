@@ -16,4 +16,7 @@ dependencies = [
     "tritonclient[http]>=2.55.0",
     "jupyter>=1.0.0",
     "ipykernel>=6.29.0",
+    "networkx>=3.6.1",
+    "plotly>=6.6.0",
+    "dash>=4.0.0",
 ]
