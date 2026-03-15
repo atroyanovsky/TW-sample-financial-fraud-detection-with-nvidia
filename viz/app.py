@@ -109,8 +109,11 @@ def build_payload(edge_df, attr_df, compute_shap=False):
 # ---------------------------------------------------------------------------
 # Batch inference on a large context window (N_INFERENCE transactions)
 # then select N_FRAUD + N_LEGIT for display
+# Results are cached in viz/inference_cache.npz to avoid re-running on restart
 # ---------------------------------------------------------------------------
-N_INFERENCE = 2500
+N_INFERENCE  = 20000
+CACHE_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inference_cache.npz")
+
 rng = np.random.default_rng(RANDOM_SEED)
 fraud_idx = test_labels[test_labels["Fraud"] == 1].index.tolist()
 legit_idx  = test_labels[test_labels["Fraud"] == 0].index.tolist()
@@ -124,21 +127,37 @@ batch_edges  = test_edges.iloc[batch_idx].reset_index(drop=True)
 batch_attrs  = test_edge_attrs.iloc[batch_idx].reset_index(drop=True)
 batch_labels = test_labels.iloc[batch_idx].reset_index(drop=True)
 
-print(f"Fetching batch predictions from endpoint ({len(batch_idx)} transactions)…")
 session   = boto3.Session(profile_name=AWS_PROFILE, region_name=AWS_REGION)
 runtime   = session.client("sagemaker-runtime")
 sm_client = session.client("sagemaker")
 
-t0 = time.time()
-resp = runtime.invoke_endpoint(
-    EndpointName=ENDPOINT_NAME,
-    ContentType="application/json",
-    Body=json.dumps({"inputs": numpy_to_triton(build_payload(batch_edges, batch_attrs)),
-                     "outputs": [{"name": "PREDICTION"}]}),
-)
-batch_predictions = np.array(json.loads(resp["Body"].read())["outputs"][0]["data"]).flatten()
-print(f"Batch predictions ready in {time.time()-t0:.1f}s  "
-      f"({(batch_predictions > THRESHOLD).sum()}/{len(batch_idx)} flagged as fraud)")
+if os.path.exists(CACHE_PATH):
+    cache = np.load(CACHE_PATH)
+    # Validate cache was built from the same batch
+    if np.array_equal(cache["batch_idx"], batch_idx):
+        batch_predictions = cache["batch_predictions"]
+        print(f"Loaded predictions from cache  "
+              f"({(batch_predictions > THRESHOLD).sum()}/{len(batch_idx)} flagged as fraud)")
+    else:
+        print("Cache batch mismatch — re-running inference…")
+        os.remove(CACHE_PATH)
+        batch_predictions = None
+else:
+    batch_predictions = None
+
+if batch_predictions is None:
+    print(f"Fetching batch predictions from endpoint ({len(batch_idx)} transactions)…")
+    t0 = time.time()
+    resp = runtime.invoke_endpoint(
+        EndpointName=ENDPOINT_NAME,
+        ContentType="application/json",
+        Body=json.dumps({"inputs": numpy_to_triton(build_payload(batch_edges, batch_attrs)),
+                         "outputs": [{"name": "PREDICTION"}]}),
+    )
+    batch_predictions = np.array(json.loads(resp["Body"].read())["outputs"][0]["data"]).flatten()
+    np.savez(CACHE_PATH, batch_idx=batch_idx, batch_predictions=batch_predictions)
+    print(f"Predictions ready in {time.time()-t0:.1f}s — cached to {CACHE_PATH}  "
+          f"({(batch_predictions > THRESHOLD).sum()}/{len(batch_idx)} flagged as fraud)")
 
 # Pick N_FRAUD highest-scoring actual-fraud + N_LEGIT lowest-scoring actual-legit
 batch_is_fraud = batch_labels["Fraud"].values == 1
@@ -223,6 +242,16 @@ def make_subgraph_figure(idx, step=2):
     ctx   = sg["context_edges"]
     au, am = sg["anchor_user"], sg["anchor_merchant"]
 
+    # Fraudulent test transactions between 2-hop users and subgraph merchants
+    # (reveals the fraud ring connecting the neighbourhood)
+    fraud_ring = [
+        i for i in range(N_TX)
+        if i != idx
+        and int(sample_labels.iloc[i]["Fraud"]) == 1
+        and int(sample_edges.iloc[i]["src"]) in hop2
+        and int(sample_edges.iloc[i]["dst"]) in set(all_m)
+    ]
+
     # Build full graph for layout — always use complete subgraph so positions
     # are stable across animation steps
     G_layout = nx.Graph()
@@ -267,6 +296,24 @@ def make_subgraph_figure(idx, step=2):
             fig.add_trace(go.Scatter(x=cx, y=cy, mode="lines",
                                       line=dict(color=COLORS["context_edge"], width=1),
                                       hoverinfo="none", showlegend=False))
+
+    # ── Fraud ring edges (step 2 only) ───────────────────────────────────
+    # Other known-fraudulent transactions between 2-hop users and subgraph merchants
+    if step >= 2:
+        for pi in fraud_ring:
+            pu = int(sample_edges.iloc[pi]["src"])
+            pm = int(sample_edges.iloc[pi]["dst"])
+            pp = float(predictions[pi])
+            if pu in u_pos and pm in m_pos:
+                fig.add_trace(go.Scatter(
+                    x=[u_pos[pu][0], m_pos[pm][0]],
+                    y=[u_pos[pu][1], m_pos[pm][1]],
+                    mode="lines",
+                    line=dict(color=COLORS["fraud_edge"], width=2, dash="dot"),
+                    hovertext=(f"Fraud ring  Tx {pi+1}: U{pu}→M{pm}<br>"
+                               f"Score: {pp:.3f}"),
+                    hoverinfo="text", showlegend=False,
+                ))
 
     # ── New transaction edge (always shown) ──────────────────────────────
     edge_color = COLORS["fraud_edge"] if pred > THRESHOLD else COLORS["legit_edge"]
