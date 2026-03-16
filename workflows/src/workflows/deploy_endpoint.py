@@ -136,14 +136,16 @@ def create_endpoint(sm_client, endpoint_name, config_name):
         )
         print(f"✓ Endpoint creation initiated: {endpoint_name}")
         return endpoint_name
-    except sm_client.exceptions.ResourceInUse:
-        print(f"Endpoint '{endpoint_name}' already exists, updating instead...")
-        sm_client.update_endpoint(
-            EndpointName=endpoint_name,
-            EndpointConfigName=config_name
-        )
-        print(f"✓ Endpoint update initiated: {endpoint_name}")
-        return endpoint_name
+    except Exception as e:
+        if "already existing" in str(e) or "ResourceInUse" in str(e):
+            print(f"Endpoint '{endpoint_name}' already exists, updating instead...")
+            sm_client.update_endpoint(
+                EndpointName=endpoint_name,
+                EndpointConfigName=config_name
+            )
+            print(f"✓ Endpoint update initiated: {endpoint_name}")
+            return endpoint_name
+        raise
 
 
 def wait_for_endpoint(sm_client, endpoint_name, timeout_minutes=30):
