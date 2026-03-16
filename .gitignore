@@ -27,3 +27,4 @@ probe-test-results.json.DS_Store
 # Mac
 .DS_Store
 viz/inference_cache.npz
+viz/shap_cache.json
