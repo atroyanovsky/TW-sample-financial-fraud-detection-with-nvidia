@@ -46,6 +46,10 @@ MAX_2HOP      = 5
 THRESHOLD     = 0.5
 RANDOM_SEED   = 42
 
+# RobustScaler params fit on training Amount (year < 2018); used to decode scaled amounts
+AMOUNT_MEDIAN = 30.32
+AMOUNT_IQR    = 56.33
+
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
@@ -54,9 +58,9 @@ train_edges      = pd.read_csv(os.path.join(DATA_DIR, "edges", "user_to_merchant
 user_feats       = pd.read_csv(os.path.join(DATA_DIR, "nodes", "user.csv"))
 merchant_feats   = pd.read_csv(os.path.join(DATA_DIR, "nodes", "merchant.csv"))
 
-test_edges       = pd.read_csv(os.path.join(TEST_DIR, "edges", "user_to_merchant.csv"))
-test_edge_attrs  = pd.read_csv(os.path.join(TEST_DIR, "edges", "user_to_merchant_attr.csv"))
-test_labels      = pd.read_csv(os.path.join(TEST_DIR, "edges", "user_to_merchant_label.csv"))
+test_edges       = pd.read_csv(os.path.join(DATA_DIR, "edges", "user_to_merchant.csv"))
+test_edge_attrs  = pd.read_csv(os.path.join(DATA_DIR, "edges", "user_to_merchant_attr.csv"))
+test_labels      = pd.read_csv(os.path.join(DATA_DIR, "edges", "user_to_merchant_label.csv"))
 
 user_mask     = pd.read_csv(os.path.join(TEST_DIR, "nodes", "user_feature_mask.csv"),
                              header=None).values.ravel().astype(np.int32)
@@ -111,8 +115,9 @@ def build_payload(edge_df, attr_df, compute_shap=False):
 # then select N_FRAUD + N_LEGIT for display
 # Results are cached in viz/inference_cache.npz to avoid re-running on restart
 # ---------------------------------------------------------------------------
-N_INFERENCE  = 20000
-CACHE_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inference_cache.npz")
+N_INFERENCE  = 50000
+CACHE_PATH      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inference_cache.npz")
+SHAP_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shap_cache.json")
 
 rng = np.random.default_rng(RANDOM_SEED)
 fraud_idx = test_labels[test_labels["Fraud"] == 1].index.tolist()
@@ -159,19 +164,41 @@ if batch_predictions is None:
     print(f"Predictions ready in {time.time()-t0:.1f}s — cached to {CACHE_PATH}  "
           f"({(batch_predictions > THRESHOLD).sum()}/{len(batch_idx)} flagged as fraud)")
 
-# Pick N_FRAUD highest-scoring actual-fraud + N_LEGIT lowest-scoring actual-legit
+# Random balanced sample: N_FRAUD actual fraud + N_LEGIT actual legit
 batch_is_fraud = batch_labels["Fraud"].values == 1
 fraud_pos = np.where(batch_is_fraud)[0]
 legit_pos  = np.where(~batch_is_fraud)[0]
-top_fraud = fraud_pos[np.argsort(batch_predictions[fraud_pos])[-N_FRAUD:]]
-top_legit = legit_pos[np.argsort(batch_predictions[legit_pos])[:N_LEGIT]]
-chosen = np.sort(np.concatenate([top_fraud, top_legit]))
+rng_display = np.random.default_rng(RANDOM_SEED)
+sel_fraud = rng_display.choice(fraud_pos, min(N_FRAUD, len(fraud_pos)), replace=False)
+sel_legit = rng_display.choice(legit_pos, N_LEGIT, replace=False)
+chosen = np.sort(np.concatenate([sel_fraud, sel_legit]))
 
 sample_edges  = batch_edges.iloc[chosen].reset_index(drop=True)
 sample_attrs  = batch_attrs.iloc[chosen].reset_index(drop=True)
 sample_labels = batch_labels.iloc[chosen].reset_index(drop=True)
 predictions   = batch_predictions[chosen]
 N_TX          = len(chosen)
+
+# ---------------------------------------------------------------------------
+# SHAP cache — keyed by batch hash so it auto-invalidates when batch changes
+# ---------------------------------------------------------------------------
+def _batch_hash():
+    return str(hash(batch_idx.tobytes()))
+
+def _load_shap_cache():
+    if not os.path.exists(SHAP_CACHE_PATH):
+        return {}
+    with open(SHAP_CACHE_PATH) as f:
+        data = json.load(f)
+    if data.get("batch_hash") != _batch_hash():
+        return {}
+    return data.get("entries", {})
+
+def _save_shap_cache(cache):
+    with open(SHAP_CACHE_PATH, "w") as f:
+        json.dump({"batch_hash": _batch_hash(), "entries": cache}, f)
+
+shap_cache = _load_shap_cache()
 
 # ---------------------------------------------------------------------------
 # Extract 2-hop subgraphs
@@ -242,15 +269,17 @@ def make_subgraph_figure(idx, step=2):
     ctx   = sg["context_edges"]
     au, am = sg["anchor_user"], sg["anchor_merchant"]
 
-    # Fraudulent test transactions between 2-hop users and subgraph merchants
-    # (reveals the fraud ring connecting the neighbourhood)
-    fraud_ring = [
-        i for i in range(N_TX)
-        if i != idx
-        and int(sample_labels.iloc[i]["Fraud"]) == 1
-        and int(sample_edges.iloc[i]["src"]) in hop2
-        and int(sample_edges.iloc[i]["dst"]) in set(all_m)
-    ]
+    # Fraudulent transactions from the full test set between 2-hop users and
+    # subgraph merchants — reveals the fraud ring connecting the neighbourhood
+    all_m_set = set(all_m)
+    ring_mask = (
+        test_labels["Fraud"].values == 1
+    ) & (
+        test_edges["src"].isin(hop2).values
+    ) & (
+        test_edges["dst"].isin(all_m_set).values
+    )
+    ring_rows = test_edges[ring_mask].head(30)  # cap to avoid overdrawing
 
     # Build full graph for layout — always use complete subgraph so positions
     # are stable across animation steps
@@ -298,20 +327,19 @@ def make_subgraph_figure(idx, step=2):
                                       hoverinfo="none", showlegend=False))
 
     # ── Fraud ring edges (step 2 only) ───────────────────────────────────
-    # Other known-fraudulent transactions between 2-hop users and subgraph merchants
+    # Known-fraudulent transactions from the full test set between 2-hop users
+    # and subgraph merchants
     if step >= 2:
-        for pi in fraud_ring:
-            pu = int(sample_edges.iloc[pi]["src"])
-            pm = int(sample_edges.iloc[pi]["dst"])
-            pp = float(predictions[pi])
+        for _, ring_row in ring_rows.iterrows():
+            pu = int(ring_row["src"])
+            pm = int(ring_row["dst"])
             if pu in u_pos and pm in m_pos:
                 fig.add_trace(go.Scatter(
                     x=[u_pos[pu][0], m_pos[pm][0]],
                     y=[u_pos[pu][1], m_pos[pm][1]],
                     mode="lines",
                     line=dict(color=COLORS["fraud_edge"], width=2, dash="dot"),
-                    hovertext=(f"Fraud ring  Tx {pi+1}: U{pu}→M{pm}<br>"
-                               f"Score: {pp:.3f}"),
+                    hovertext=f"Fraud ring: U{pu}→M{pm}",
                     hoverinfo="text", showlegend=False,
                 ))
 
@@ -397,27 +425,49 @@ def make_subgraph_figure(idx, step=2):
 
 def make_shap_figure(idx):
     """Fetch Shapley values for transaction idx and return a bar chart."""
-    sg   = subgraphs[idx]
-    single_edge = sample_edges.iloc[[idx]]
-    single_attr = sample_attrs.iloc[[idx]]
-    payload = build_payload(single_edge, single_attr, compute_shap=True)
-    body    = json.dumps({
-        "inputs":  numpy_to_triton(payload),
-        "outputs": [{"name": "PREDICTION"},
-                    {"name": "shap_values_user"},
-                    {"name": "shap_values_merchant"},
-                    {"name": "shap_values_user_to_merchant"}],
-    })
-    resp2   = runtime.invoke_endpoint(EndpointName=ENDPOINT_NAME,
-                                      ContentType="application/json", Body=body)
-    outputs = {o["name"]: np.array(o["data"]).reshape(o["shape"])
-               for o in json.loads(resp2["Body"].read())["outputs"]}
+    cache_key = str(idx)
+    shap_keys = ["shap_values_user", "shap_values_merchant", "shap_values_user_to_merchant"]
 
-    labels = ["User / Card", "Merchant", "Transaction edge"]
-    keys   = ["shap_values_user", "shap_values_merchant", "shap_values_user_to_merchant"]
-    values = [float(np.sum(outputs[k])) if k in outputs else 0.0 for k in keys]
+    if cache_key in shap_cache:
+        outputs = {k: np.array(v) for k, v in shap_cache[cache_key].items()}
+        print(f"SHAP cache hit for tx {idx}")
+    else:
+        single_edge = sample_edges.iloc[[idx]]
+        single_attr = sample_attrs.iloc[[idx]]
+        payload = build_payload(single_edge, single_attr, compute_shap=True)
+        body    = json.dumps({
+            "inputs":  numpy_to_triton(payload),
+            "outputs": [{"name": "PREDICTION"}] + [{"name": k} for k in shap_keys],
+        })
+        resp2   = runtime.invoke_endpoint(EndpointName=ENDPOINT_NAME,
+                                          ContentType="application/json", Body=body)
+        outputs = {o["name"]: np.array(o["data"]).reshape(o["shape"])
+                   for o in json.loads(resp2["Body"].read())["outputs"]}
+        shap_cache[cache_key] = {k: outputs[k].tolist() for k in shap_keys if k in outputs}
+        _save_shap_cache(shap_cache)
 
-    order  = sorted(range(3), key=lambda i: values[i])
+    # Each SHAP output contains one value per mask group, in group-index order
+    # Groups are defined by the feature masks set at preprocessing time:
+    #   user  group 0 → Card profile
+    #   merch group 1 → Merchant profile   group 2 → Merchant category (MCC)
+    #   edge  group 3 → City   4 → ZIP   5 → Errors   6 → Tx type   7 → Amount
+    group_labels = {
+        "shap_values_user":              ["Card profile"],
+        "shap_values_merchant":          ["Merchant profile", "Merchant category (MCC)"],
+        "shap_values_user_to_merchant":  ["City", "ZIP code", "Errors",
+                                          "Transaction type", "Amount"],
+    }
+
+    labels, values = [], []
+    for key, names in group_labels.items():
+        if key not in outputs:
+            continue
+        vals = outputs[key].flatten()
+        for name, val in zip(names, vals):
+            labels.append(name)
+            values.append(float(val))
+
+    order  = sorted(range(len(values)), key=lambda i: values[i])
     labels = [labels[i] for i in order]
     values = [values[i] for i in order]
     colors = ["#EF4444" if v > 0 else "#3B82F6" for v in values]
@@ -434,7 +484,7 @@ def make_shap_figure(idx):
         xaxis_title="Contribution",
         plot_bgcolor="white",
         margin=dict(l=10, r=30, t=45, b=30),
-        height=220,
+        height=max(220, len(values) * 30 + 60),
     )
     return fig
 
@@ -462,16 +512,6 @@ def make_results_figure():
     return fig
 
 
-# ---------------------------------------------------------------------------
-# Summary stats
-# ---------------------------------------------------------------------------
-predicted_labels = (predictions > THRESHOLD).astype(int)
-gt_labels        = sample_labels["Fraud"].values
-accuracy  = (predicted_labels == gt_labels).mean()
-tp = int(((predicted_labels == 1) & (gt_labels == 1)).sum())
-tn = int(((predicted_labels == 0) & (gt_labels == 0)).sum())
-fp = int(((predicted_labels == 1) & (gt_labels == 0)).sum())
-fn = int(((predicted_labels == 0) & (gt_labels == 1)).sum())
 
 # ---------------------------------------------------------------------------
 # App layout
@@ -526,16 +566,14 @@ app.layout = html.Div([
         html.Div([
             html.H2("GNN Fraud Detection — Live Transaction Monitor",
                     style={"margin": "0", "fontSize": "18px", "fontWeight": "700"}),
-            html.P("2-hop subgraph extraction · SageMaker + Triton · TabFormer dataset",
+            html.P("Architecture demo · 2-hop subgraph extraction · SageMaker + Triton · "
+                   "TabFormer synthetic dataset · Threshold 0.05 · Training set",
                    style={"margin": "2px 0 0", "fontSize": "12px", "color": "#6B7280"}),
         ], style={"flex": "1"}),
         html.Div([
             stat_box(f"{N_TX}", "Transactions"),
             stat_box(f"{N_FRAUD}", "Fraud samples", "#EF4444"),
             stat_box(f"{N_LEGIT}", "Legit samples", "#22C55E"),
-            stat_box(f"{accuracy:.0%}", "Accuracy"),
-            stat_box(f"TP {tp} / TN {tn}", "Correct"),
-            stat_box(f"FP {fp} / FN {fn}", "Errors", "#F59E0B"),
         ], style={"display": "flex", "gap": "8px"}),
     ], style={"display": "flex", "alignItems": "center", "gap": "20px",
               "padding": "14px 20px", "background": "#1E3A5F",
@@ -699,6 +737,27 @@ def update_prediction_panel(idx):
     outcome_colors = {"TP": "#EF4444", "TN": "#22C55E", "FP": "#F59E0B", "FN": "#8B5CF6"}
     pred_color = "#EF4444" if is_fraud else "#22C55E"
 
+    row = sample_attrs.iloc[idx]
+
+    # Transaction type (cols 34-36)
+    tx_type_cols = ["Chip", "Online", "Swipe"]
+    tx_type_vals = row.iloc[34:37].values
+    tx_type = tx_type_cols[int(tx_type_vals.argmax())] if tx_type_vals.max() > 0 else "Unknown"
+
+    # Amount (col 37) — stored as RobustScaler normalised value; decode to dollars
+    amount_dollars = float(row.iloc[37]) * AMOUNT_IQR + AMOUNT_MEDIAN
+
+    # City (cols 0-13) — one-hot, show active index
+    city_idx = int(row.iloc[0:14].values.argmax())
+
+    # ZIP (cols 14-28) — one-hot, show active index
+    zip_idx = int(row.iloc[14:29].values.argmax())
+
+    # Errors (cols 29-33) — Errors_4 = no error, others = error present
+    err_vals = row.iloc[29:34].values
+    err_active = int(err_vals.argmax())
+    error_label = "No error" if err_active == 4 else f"Error (code {err_active})"
+
     return html.Div([
         html.Div(f"Transaction {idx + 1}",
                  style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "10px"}),
@@ -709,6 +768,24 @@ def update_prediction_panel(idx):
             html.Div(f"Score: {pred:.4f}",
                      style={"fontSize": "13px", "color": "#6B7280"}),
         ], style={"marginBottom": "12px"}),
+
+        html.Div("Transaction Details",
+                 style={"fontWeight": "600", "fontSize": "12px",
+                        "color": "#374151", "marginBottom": "6px"}),
+        *[html.Div([
+            html.Span(label, style={"color": "#6B7280", "fontSize": "11px",
+                                    "width": "90px", "display": "inline-block"}),
+            html.Span(str(value), style={"fontWeight": "600", "fontSize": "12px"}),
+          ], style={"marginBottom": "3px"})
+          for label, value in [
+              ("Type",    tx_type),
+              ("Amount",  f"${amount_dollars:.2f}"),
+              ("City",    f"City {city_idx}"),
+              ("ZIP",     f"ZIP {zip_idx}"),
+              ("Errors",  error_label),
+          ]],
+
+        html.Hr(style={"borderColor": "#E5E7EB", "margin": "10px 0"}),
 
         html.Div([
             html.Span("Outcome: ", style={"fontSize": "12px", "color": "#6B7280"}),
