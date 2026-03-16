@@ -381,8 +381,9 @@ def preprocess_data(tabformer_base_path):
             [fraud_df, non_fraud_df.sample(nr_non_fraud_samples, random_state=42)]
         )
 
-    predictor_columns = list(set(predictor_columns) - set(MERCHANT_AND_USER_COLS))
-    nominal_predictors = list(set(nominal_predictors) - set(MERCHANT_AND_USER_COLS))
+    exclude = set(MERCHANT_AND_USER_COLS)
+    predictor_columns = sorted([c for c in predictor_columns if c not in exclude])
+    nominal_predictors = sorted([c for c in nominal_predictors if c not in exclude])
 
     data = data.sample(frac=1, random_state=42).reset_index(drop=True)
 
