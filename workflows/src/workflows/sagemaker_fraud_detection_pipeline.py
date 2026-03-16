@@ -127,10 +127,11 @@ def deploy_endpoint(
     role_arn: str,
     default_bucket: str,
     endpoint_name: str = "fraud-detection-endpoint",
-    instance_type: str = "ml.g6e.2xlarge",
+    instance_type: str = "ml.g5.xlarge",
     initial_instance_count: int = 1,
     model_package_group_name: str = "fraud-detection-models",
     profile_name: str = None,
+    inference_ami_version: str = "al2-ami-sagemaker-inference-gpu-3-1",
 ):
     """Deploy the latest approved model from the model package group."""
     sagemaker_session, _ = get_session(region, default_bucket, profile_name)
@@ -160,24 +161,25 @@ def deploy_endpoint(
     model_name = f"{endpoint_name}-model-{timestamp}"
     endpoint_config_name = f"{endpoint_name}-config-{timestamp}"
 
-    # Create Model from model package
-    model = Model.create(
-        model_name=model_name,
-        primary_container=ContainerDefinition(model_package_name=model_package_arn),
-        execution_role_arn=role_arn,
+    # Create Model from model package (direct boto3 — SDK wrappers don't support InferenceAmiVersion)
+    sm_client.create_model(
+        ModelName=model_name,
+        PrimaryContainer={"ModelPackageName": model_package_arn},
+        ExecutionRoleArn=role_arn,
     )
     print(f"Created model: {model_name}")
 
-    # Create EndpointConfig
-    endpoint_config = EndpointConfig.create(
-        endpoint_config_name=endpoint_config_name,
-        production_variants=[
-            ProductionVariant(
-                variant_name="AllTraffic",
-                model_name=model_name,
-                initial_instance_count=initial_instance_count,
-                instance_type=instance_type,
-            )
+    # Create EndpointConfig with pinned AMI to avoid CUDA driver mismatches
+    sm_client.create_endpoint_config(
+        EndpointConfigName=endpoint_config_name,
+        ProductionVariants=[
+            {
+                "VariantName": "AllTraffic",
+                "ModelName": model_name,
+                "InstanceType": instance_type,
+                "InitialInstanceCount": initial_instance_count,
+                "InferenceAmiVersion": inference_ami_version,
+            }
         ],
     )
     print(f"Created endpoint config: {endpoint_config_name}")
@@ -200,29 +202,29 @@ def deploy_endpoint(
                 EndpointName=endpoint_name,
                 EndpointConfigName=endpoint_config_name,
             )
-            endpoint = Endpoint.get(endpoint_name=endpoint_name)
     except sm_client.exceptions.ClientError as e:
         if e.response["Error"]["Code"] == "ValidationException" and "Could not find endpoint" in str(e):
-            endpoint = Endpoint.create(
-                endpoint_name=endpoint_name,
-                endpoint_config_name=endpoint_config_name,
+            sm_client.create_endpoint(
+                EndpointName=endpoint_name,
+                EndpointConfigName=endpoint_config_name,
             )
             print(f"Creating endpoint: {endpoint_name}")
         else:
             raise
     except Exception as e:
         if "deleted" in str(e):
-            endpoint = Endpoint.create(
-                endpoint_name=endpoint_name,
-                endpoint_config_name=endpoint_config_name,
+            sm_client.create_endpoint(
+                EndpointName=endpoint_name,
+                EndpointConfigName=endpoint_config_name,
             )
             print(f"Creating endpoint: {endpoint_name}")
         else:
             raise
 
-    endpoint.wait_for_status("InService")
+    waiter = sm_client.get_waiter("endpoint_in_service")
+    waiter.wait(EndpointName=endpoint_name, WaiterConfig={"Delay": 30, "MaxAttempts": 60})
     print(f"Endpoint '{endpoint_name}' is now InService.")
-    return endpoint
+    return endpoint_name
 
 
 def get_pipeline(
@@ -327,7 +329,7 @@ def get_pipeline(
     step_process = ProcessingStep(
         name="PreprocessData",
         step_args=processor_args,
-        cache_config=cache_true_config,
+        cache_config=cache_false_config,
     )
 
     # Step 2: Training (GNN+XGBoost)

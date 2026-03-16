@@ -27,8 +27,8 @@ const trainingImageRepo = new SageMakerTrainingImageRepoStack(
   {
     env: env,
     repoUrl:
-      "https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia.git",
-    branch: "v2_sagemaker",
+      "https://github.com/atroyanovsky/TW-sample-financial-fraud-detection-with-nvidia.git",
+    branch: "v2_sagemaker_viz",
   },
 );
 
@@ -38,8 +38,8 @@ const preprocessingImageRepo = new SageMakerPreprocessingImageRepoStack(
   {
     env: env,
     repoUrl:
-      "https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia.git",
-    branch: "v2_sagemaker",
+      "https://github.com/atroyanovsky/TW-sample-financial-fraud-detection-with-nvidia.git",
+    branch: "v2_sagemaker_viz",
   },
 );
 
@@ -47,8 +47,8 @@ const preprocessingImageRepo = new SageMakerPreprocessingImageRepoStack(
 const tritonImageRepo = new TritonImageRepoStack(app, "TritonImageRepoStack", {
   env: env,
   repoUrl:
-    "https://github.com/aws-samples/sample-financial-fraud-detection-with-nvidia.git",
-  branch: "v2_sagemaker",
+    "https://github.com/atroyanovsky/TW-sample-financial-fraud-detection-with-nvidia.git",
+  branch: "v2_sagemaker_viz",
 });
 
 // 3. Base Infrastructure (S3 buckets)

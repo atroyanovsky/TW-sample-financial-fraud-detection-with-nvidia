@@ -37,7 +37,7 @@ TEST_DIR      = os.path.join(DATA_DIR, "test_gnn")
 
 AWS_PROFILE   = "Admin-Account-Access-541765610078"
 AWS_REGION    = "us-east-1"
-ENDPOINT_NAME = "fraud-detection-endpoint"
+ENDPOINT_NAME = "fraud-detection-endpoint-v2"
 
 N_FRAUD       = 15
 N_LEGIT       = 15
@@ -739,6 +739,17 @@ def update_prediction_panel(idx):
 
     row = sample_attrs.iloc[idx]
 
+    # Column order: City(0-13), Errors(14-18), Zip(19-33), Chip(34-36), Amount(37)
+
+    # City (cols 0-13) — one-hot, show active index
+    city_idx = int(row.iloc[0:14].values.argmax())
+
+    # Errors (cols 14-18) — Errors_4 = no error, others = error present
+    err_vals = row.iloc[14:19].values
+
+    # ZIP (cols 19-33) — one-hot, show active index
+    zip_idx = int(row.iloc[19:34].values.argmax())
+
     # Transaction type (cols 34-36)
     tx_type_cols = ["Chip", "Online", "Swipe"]
     tx_type_vals = row.iloc[34:37].values
@@ -746,15 +757,6 @@ def update_prediction_panel(idx):
 
     # Amount (col 37) — stored as RobustScaler normalised value; decode to dollars
     amount_dollars = float(row.iloc[37]) * AMOUNT_IQR + AMOUNT_MEDIAN
-
-    # ZIP (cols 0-14) — one-hot, show active index
-    zip_idx = int(row.iloc[0:15].values.argmax())
-
-    # Errors (cols 15-19) — Errors_4 = no error, others = error present
-    err_vals = row.iloc[15:20].values
-
-    # City (cols 20-33) — one-hot, show active index
-    city_idx = int(row.iloc[20:34].values.argmax())
     err_active = int(err_vals.argmax())
     error_label = "No error" if err_active == 4 else f"Error (code {err_active})"
 
