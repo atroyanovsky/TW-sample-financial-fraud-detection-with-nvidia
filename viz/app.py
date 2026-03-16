@@ -747,14 +747,14 @@ def update_prediction_panel(idx):
     # Amount (col 37) — stored as RobustScaler normalised value; decode to dollars
     amount_dollars = float(row.iloc[37]) * AMOUNT_IQR + AMOUNT_MEDIAN
 
-    # City (cols 0-13) — one-hot, show active index
-    city_idx = int(row.iloc[0:14].values.argmax())
+    # ZIP (cols 0-14) — one-hot, show active index
+    zip_idx = int(row.iloc[0:15].values.argmax())
 
-    # ZIP (cols 14-28) — one-hot, show active index
-    zip_idx = int(row.iloc[14:29].values.argmax())
+    # Errors (cols 15-19) — Errors_4 = no error, others = error present
+    err_vals = row.iloc[15:20].values
 
-    # Errors (cols 29-33) — Errors_4 = no error, others = error present
-    err_vals = row.iloc[29:34].values
+    # City (cols 20-33) — one-hot, show active index
+    city_idx = int(row.iloc[20:34].values.argmax())
     err_active = int(err_vals.argmax())
     error_label = "No error" if err_active == 4 else f"Error (code {err_active})"
 
